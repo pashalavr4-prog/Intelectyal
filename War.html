@@ -41,6 +41,7 @@ a.smalllink { color:#93c5fd; text-decoration:none; }
 <div class="info-row"><strong>Мои чанки:</strong> <span id="myChunksCount">0</span></div>
 <div class="info-row"><strong>Лог:</strong></div>
 <div id="log" class="log"></div>
+<div id="leaderboardContainer"></div>
 <div style="margin-top:12px" class="small">
 Прототип использует Leaflet + localStorage. Можно изменять параметры прямо в коде: количество ботов, размер чанка, силу, скорость и т.д.
 </div>
@@ -57,14 +58,13 @@ const BOT_ATTACK_INTERVAL = 12000;
 const PLAYER_ATTACK_COST = 200;
 const CHUNK_BASE_COST = 500;
 const STRUCTURE_COST = 300;
-const STRUCTURE_REWARD = 150; // награда за постройку каждые 2 сек
+const STRUCTURE_REWARD = 150; 
 const MAX_BOT_POWER = 150;
 const MAX_PLAYER_POWER = 150;
 const KM_TO_M = 1000;
 
 /* ===================== Инициализация ===================== */
 const map = L.map('map', { worldCopyJump:true }).setView([20,0], 2);
-// яркая карта
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
 
 document.getElementById('chunkSizeDisplay').textContent = CHUNK_SIZE_KM;
@@ -79,14 +79,14 @@ const state = {
 };
 
 /* ---------- localStorage ---------- */
-function saveState(){ localStorage.setItem('war_chunks_v1', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
+function saveState(){ localStorage.setItem('war_chunks_v2', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
 function loadState(){
-  const raw = localStorage.getItem('war_chunks_v1');
+  const raw = localStorage.getItem('war_chunks_v2');
   if(!raw) return false;
   try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; return true;} 
   catch(e){console.error(e); return false;}
 }
-function resetAll(){ localStorage.removeItem('war_chunks_v1'); location.reload(); }
+function resetAll(){ localStorage.removeItem('war_chunks_v2'); location.reload(); }
 
 /* ---------- гео утилиты ---------- */
 function latLngToMeters(lat,lng){const R=6378137; return [R*lng*Math.PI/180, R*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))];}
@@ -140,8 +140,7 @@ function selectChunk(key){
   const ownerText=owner==='player'?'<span class="owner-player">Игрок</span>':owner?`<span class="owner-bot">Бот ${owner}</span>`:'<span class="owner-none">Свободен</span>';
   const bounds=chunkBoundsFromKey(key);
   const centerLat=(bounds[0][0]+bounds[1][0])/2, centerLng=(bounds[0][1]+bounds[1][1])/2;
-  info.innerHTML=`
-    <div class="small">Чанк: <strong>${key}</strong></div>
+  info.innerHTML=`<div class="small">Чанк: <strong>${key}</strong></div>
     <div class="small">Центр: ${centerLat.toFixed(2)}, ${centerLng.toFixed(2)}</div>
     <div style="margin-top:8px">Владелец: ${ownerText}</div>
     <div style="margin-top:6px">Структуры: ${chunk.structures.length||0} ${chunk.structures.map(s=>`<span class="structure">${s}</span>`).join('')}</div>
@@ -160,12 +159,10 @@ function selectChunk(key){
     if(state.money<STRUCTURE_COST){alert('Недостаточно денег');return;}
     state.money-=STRUCTURE_COST;
     state.chunks[key].structures.push('House Sticker');
-    
     const pos=randomPointInChunk(key);
     const marker=L.marker(pos).addTo(map).bindPopup('Стикер дома');
     if(!state.markers.structures[key]) state.markers.structures[key]=[];
     state.markers.structures[key].push(marker);
-
     log(`Игрок построил House Sticker в чанке ${key}`);
     saveState(); refreshUI(); updateChunkStyle(key);
   };
@@ -218,17 +215,53 @@ function refreshUI(){
   document.getElementById('money').textContent=state.money.toFixed(2);
   document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
 }
+
+/* ---------- Leaderboard ---------- */
+const leaderboardDiv = document.createElement('div');
+leaderboardDiv.innerHTML = `<h2>Таблица лидеров</h2>
+  <div style="margin-bottom:6px"><strong>По чанкам:</strong></div>
+  <ol id="leaderboardChunks"></ol>
+  <div style="margin-top:6px;margin-bottom:6px"><strong>По деньгам:</strong></div>
+  <ol id="leaderboardMoney"></ol>
+`;
+document.getElementById('leaderboardContainer').appendChild(leaderboardDiv);
+
+function updateLeaderboard(){
+  const chunkCounts={};
+  for(const key in state.chunks){const owner=state.chunks[key].owner;if(!owner) continue; chunkCounts[owner]=(chunkCounts[owner]||0)+1;}
+  
+  // Деньги игрока
+  const moneyList=[{name:'Игрок',money:state.money}];
+  // Деньги ботов считаем как reward за их структуры
+  for(const id in state.bots){
+    const bot=state.bots[id]; 
+    const ownedChunks = Object.values(state.chunks).filter(c=>c.owner===id);
+    let botMoney = 0;
+    for(const c of ownedChunks){botMoney+=c.structures.filter(s=>'House Sticker'===s).length*STRUCTURE_REWARD;}
+    moneyList.push({name:bot.name,money:botMoney});
+  }
+
+  // Чанки
+  const sortedChunks=Object.entries(chunkCounts).sort((a,b)=>b[1]-a[1]);
+  const lbChunks=document.getElementById('leaderboardChunks'); lbChunks.innerHTML='';
+  sortedChunks.forEach(([owner,count])=>{const name=owner==='player'?'Игрок':state.bots[owner]?.name||owner; const li=document.createElement('li'); li.innerHTML=`${name}: ${count} чанков`; lbChunks.appendChild(li);});
+
+  // Деньги
+  const lbMoney=document.getElementById('leaderboardMoney'); lbMoney.innerHTML='';
+  moneyList.sort((a,b)=>b.money-a.money).forEach(p=>{const li=document.createElement('li'); li.innerHTML=`${p.name}: ${p.money.toFixed(2)}`; lbMoney.appendChild(li);});
+}
+
 map.on('moveend',()=>renderVisibleChunks());
 document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
 document.getElementById('resetBtn').onclick=()=>{if(confirm('Сбросить всё?')) resetAll();};
 
 /* ---------- init ---------- */
 if(!loadState()) spawnBotsRandomly(BOT_COUNT);
-renderVisibleChunks(); refreshUI();
+renderVisibleChunks(); refreshUI(); updateLeaderboard();
 
 /* ---------- bot loops ---------- */
-setInterval(()=>{for(const id in state.bots) botMoveStep(id); renderVisibleChunks(); refreshUI();}, BOT_MOVE_INTERVAL);
-setInterval(()=>{for(const id in state.bots) botTryAttack(id); renderVisibleChunks(); refreshUI();}, BOT_ATTACK_INTERVAL);
+setInterval(()=>{for(const id in state.bots) botMoveStep(id); renderVisibleChunks(); refreshUI(); updateLeaderboard();}, BOT_MOVE_INTERVAL);
+setInterval(()=>{for(const id in state.bots) botTryAttack(id); renderVisibleChunks(); refreshUI(); updateLeaderboard();}, BOT_ATTACK_INTERVAL);
 
 /* ---------- passive reward за дома ---------- */
 setInterval(()=>{
@@ -238,8 +271,8 @@ setInterval(()=>{
     const count=chunk.structures.filter(s=>'House Sticker'===s).length;
     if(count>0){ totalHouses+=count; state.money+=count*STRUCTURE_REWARD; }
   }
-  if(totalHouses>0) refreshUI();
-},2000); // каждые 2 сек
+  if(totalHouses>0){ refreshUI(); updateLeaderboard(); }
+},2000);
 
 </script>
 </body>
