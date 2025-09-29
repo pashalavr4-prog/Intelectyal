@@ -21,7 +21,6 @@ button { background: #2563eb; color: white; border: none; padding: 8px 10px; bor
 .structure { font-size:12px; padding:4px 6px; background:#1f2937; border-radius:4px; display:inline-block; margin-right:6px; }
 .money { font-weight:700; font-size:18px; }
 .log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:220px; overflow:auto; }
-a.smalllink { color:#93c5fd; text-decoration:none; }
 
 #taxPanel {
   position: absolute;
@@ -123,14 +122,14 @@ const state = {
 };
 
 /* ---------- localStorage ---------- */
-function saveState(){ localStorage.setItem('war_chunks_v2', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
+function saveState(){ localStorage.setItem('war_chunks_v3', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
 function loadState(){
-  const raw = localStorage.getItem('war_chunks_v2');
+  const raw = localStorage.getItem('war_chunks_v3');
   if(!raw) return false;
   try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; return true;} 
   catch(e){console.error(e); return false;}
 }
-function resetAll(){ localStorage.removeItem('war_chunks_v2'); location.reload(); }
+function resetAll(){ localStorage.removeItem('war_chunks_v3'); location.reload(); }
 
 /* ---------- гео утилиты ---------- */
 function latLngToMeters(lat,lng){const R=6378137; return [R*lng*Math.PI/180, R*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))];}
@@ -153,27 +152,28 @@ function randomPointInChunk(key){
 function log(msg){const el=document.getElementById('log'); el.innerHTML=`[${new Date().toLocaleTimeString()}] ${msg}<br>`+el.innerHTML;}
 
 /* ---------- chunks ---------- */
-function renderChunk(key){
+function renderChunk(key, forceVisible=false){
   if(state.markers.chunkRects[key]) return;
   const bounds = chunkBoundsFromKey(key);
   const rect = L.rectangle(bounds,{
-    color:'#ff0000', weight:2.5, fill:true, fillOpacity:0.7, interactive:true
+    color:'#ff0000', weight:2.5, fill:true, fillOpacity: (state.chunks[key]?.owner || forceVisible) ? 0.7 : 0.1, interactive:true
   }).addTo(map);
   rect.on('click',()=>selectChunk(key));
-  state.markers.chunkRects[key]=rect;
+  state.markers.chunkRects[key] = rect;
   updateChunkStyle(key);
 }
+
 function updateChunkStyle(key){
-  const rect=state.markers.chunkRects[key]; if(!rect) return;
-  const data = state.chunks[key]; 
-  if(!data||!data.owner) rect.setStyle({color:'#1e293b',fillOpacity:0.7});
-  else if(data.owner==='player') rect.setStyle({color:'#17a34a',fillOpacity:0.7});
-  else { const bot=state.bots[data.owner]; rect.setStyle({color:bot?bot.color:'#ff8a65',fillOpacity:0.7}); }
+  const rect = state.markers.chunkRects[key]; if(!rect) return;
+  const data = state.chunks[key];
+  if(!data.owner) rect.setStyle({color:'#ff0000', fillOpacity:0.1});
+  else if(data.owner==='player') rect.setStyle({color:'#17a34a', fillOpacity:0.7});
+  else { const bot=state.bots[data.owner]; rect.setStyle({color:bot?bot.color:'#ff8a65', fillOpacity:0.7}); }
 }
 
 /* ---------- selection ---------- */
 function selectChunk(key){
-  state.selectedChunk=key; renderChunk(key);
+  state.selectedChunk=key; renderChunk(key,true);
   const info=document.getElementById('selectedInfo'); info.style.display='block';
   const chunk=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
   const owner=chunk.owner;
@@ -191,14 +191,14 @@ function selectChunk(key){
     </div>
   `;
 
-  if(owner===null) document.getElementById('buyBtn').onclick=()=>{
+  if(owner===null) document.getElementById('buyBtn').onclick=()=>{ 
     if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег'); return;}
     state.money-=CHUNK_BASE_COST;
     state.chunks[key]={owner:'player',structures:[],powerModifier:0};
     saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);
   };
 
-  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{
+  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{ 
     if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег'); return;}
     state.money-=PLAYER_ATTACK_COST;
     const success=resolveBattle('player',owner,key);
@@ -207,7 +207,7 @@ function selectChunk(key){
     saveState(); refreshUI(); updateChunkStyle(key);
   };
 
-  if(owner==='player') document.getElementById('buildBtn').onclick=()=>{
+  if(owner==='player') document.getElementById('buildBtn').onclick=()=>{ 
     if(state.money<STRUCTURE_COST){alert('Недостаточно денег'); return;}
     state.money-=STRUCTURE_COST;
     state.chunks[key].structures.push('House Sticker');
@@ -241,10 +241,9 @@ function spawnBotsRandomly(count){
     state.bots[id]=bot;
     state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
     if(!state.chunks[key].owner) state.chunks[key].owner=id;
-    else if(Math.random()<0.3){const adj=getAdjacentKeys(key); const neigh=adj[Math.floor(Math.random()*adj.length)];
-      state.chunks[neigh]=state.chunks[neigh]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[neigh].owner) state.chunks[neigh].owner=id; bot.chunkKey=neigh;}
+    renderChunk(key,true);
   }
-  saveState(); renderAllBots(); renderVisibleChunks(); log(`Распределено ${count} ботов по миру`);
+  saveState(); renderAllBots(); log(`Распределено ${count} ботов по миру`);
 }
 function getColorForIndex(i){const p=['#fb923c','#f97316','#fb7185','#f472b6','#60a5fa','#7c3aed','#34d399','#f59e0b','#ef4444','#10b981']; return p[i%p.length];}
 function renderAllBots(){for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0); state.markers.botMarkers={}; for(const id in state.bots) placeBotMarker(id);}
@@ -253,81 +252,58 @@ function botMoveStep(botId){const bot=state.bots[botId]; if(!bot) return; const 
 function botTryAttack(botId){const bot=state.bots[botId]; if(!bot) return; const targets=getAdjacentKeys(bot.chunkKey).filter(k=>state.chunks[k]?.owner==='player'); if(!targets.length) return; const target=targets[Math.floor(Math.random()*targets.length)]; const aPower=bot.power*(0.8+Math.random()*0.6); const dPower=60+(state.chunks[target]?.powerModifier||0)+(state.chunks[target]?.structures.length||0)*8; if(aPower>dPower){state.chunks[target].owner=botId; log(`${bot.name} победил и захватил чанк ${target}`); updateChunkStyle(target);} else if(Math.random()<0.25) log(`${bot.name} атаковал ${target}, но не смог захватить`); saveState();}
 function getAdjacentKeys(key){const [x,y]=key.split('_').map(Number); return [`${x+1}_${y}`,`${x-1}_${y}`,`${x}_${y+1}`,`${x}_${y-1}`];}
 
-/* ---------- visible chunks ---------- */
-function renderVisibleChunks(){
-  const b=map.getBounds();
-  const [xStartMeters,yStartMeters]=latLngToMeters(Math.max(b.getSouth(),-90),Math.max(b.getWest(),-180));
-  const [xEndMeters,yEndMeters]=latLngToMeters(Math.min(b.getNorth(),90),Math.min(b.getEast(),180));
-  const xStart=Math.floor(xStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), xEnd=Math.floor(xEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
-  const yStart=Math.floor(yStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), yEnd=Math.floor(yEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
-  for(let xi=xStart;xi<=xEnd;xi++) for(let yi=yStart;yi<=yEnd;yi++){
-    const key=`${xi}_${yi}`; renderChunk(key);
-  }
-}
-
 /* ---------- taxes & income ---------- */
 function processTaxes(){
-  taxTimer--; if(taxTimer<=0){ taxTimer=TAX_INTERVAL;
+  taxTimer--; 
+  if(taxTimer<=0){ 
+    taxTimer=TAX_INTERVAL;
     let tax=0, income=0;
-    const chunksOwned=Object.values(state.chunks).filter(c=>c.owner==='player');
-    tax+=chunksOwned.reduce((sum,c)=>sum + c.structures.length*TAX_PER_HOUSE,0);
-    income+=chunksOwned.reduce((sum,c)=>sum + c.structures.length*HOUSE_INCOME,0);
-    tax+=chunksOwned.length*TAX_PER_CHUNK;
-    state.money=state.money - tax + income;
-    log(`Начислен доход: ${income} монет за дома, уплачен налог: ${tax} монет`);
+    for(const k in state.chunks){
+      if(state.chunks[k].owner==='player'){
+        const houses=state.chunks[k].structures.length;
+        tax+=TAX_PER_CHUNK+houses*TAX_PER_HOUSE; 
+        income+=houses*HOUSE_INCOME;
+      }
+    }
+    state.money+=income-tax;
+    document.getElementById('taxAmount').textContent = `${income-tax} (Доход:${income} Налог:${tax})`;
+    log(`Налоги/доход: ${income-tax}`);
     saveState(); refreshUI();
   }
-  const chunksOwned=Object.values(state.chunks).filter(c=>c.owner==='player');
-  const totalIncome = chunksOwned.reduce((sum,c)=>sum + c.structures.length*HOUSE_INCOME,0);
-  const totalTax = chunksOwned.reduce((sum,c)=>sum + c.structures.length*TAX_PER_HOUSE,0)+chunksOwned.length*TAX_PER_CHUNK;
-  document.getElementById('taxAmount').textContent=`Налог: ${totalTax}, Доход: ${totalIncome}`;
-  document.getElementById('taxTimer').textContent=taxTimer;
-}
-
-/* ---------- UI refresh ---------- */
-function refreshUI(){
-  document.getElementById('money').textContent=state.money;
-  document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
+  document.getElementById('taxTimer').textContent = taxTimer;
 }
 
 /* ---------- news popup ---------- */
-const newsList=[
-  "В стране бота был огромный пожар.",
-  "Бот объявил новые законы.",
-  "Произошёл взрыв на складе ресурсов.",
-  "В стране игрока забастовка населения.",
-  "Боты усиливают оборону своих чанков.",
-  "Игроки нашли секретные ресурсы.",
-  "Боты начали строительство новых домов.",
-  "В столице игрока введён комендантский час.",
-  "Произошла утечка информации о военных планах ботов.",
-  "В стране игрока появился новый лидер.",
-  "Боты получили подкрепление из соседних стран.",
-  "Игрок потерял чанк в результате атаки бота.",
-  "Сильный шторм разрушил дома ботов.",
-  "Игроки обменялись технологиями с другими странами.",
-  "Боты захватили ключевой ресурсный чанк.",
-  "На границе стран произошёл инцидент.",
-  "Новая структура увеличила доход игрока.",
-  "В стране бота вспышка эпидемии.",
-  "Игроки проводят демонстрации протеста.",
-  "Боты укрепили свои границы дополнительными строениями."
+const newsSamples=[
+  'В стране бота произошёл пожар!', 'Банк объявил о дефолте', 'Протесты в столице', 'Войска перемещены на север', 
+  'Налоговая инспекция проверяет игроков', 'Бот потерял контроль над чанком', 'Ресурсы выросли на 15%', 'Пандемия охватила регион',
+  'Появился новый лидер бота', 'Стихийное бедствие уничтожило дома', 'Игроки собрались на митинг', 'Дипломатический скандал между ботами',
+  'Власть сменилась в стране бота', 'Технологии ускорили производство', 'Чанк игрока подвергся атаке', 'В стране бота обнаружен контрабандист',
+  'Бот усилил армию', 'Игроки строят новые дома', 'Чанк повреждён стихией', 'Бот потерял доход'
 ];
-function showNews(){ const n=newsList[Math.floor(Math.random()*newsList.length)]; const popup=document.getElementById('newsPopup'); document.getElementById('newsText').textContent=n; popup.style.display='block'; setTimeout(()=>{popup.style.display='none';},13000);}
-document.getElementById('closeNewsBtn').onclick=()=>{document.getElementById('newsPopup').style.display='none';}
+function showRandomNews(){ const idx=Math.floor(Math.random()*newsSamples.length); const el=document.getElementById('newsText'); el.textContent=newsSamples[idx]; document.getElementById('newsPopup').style.display='block'; }
+document.getElementById('closeNewsBtn').onclick=()=>document.getElementById('newsPopup').style.display='none';
 
-/* ---------- main loop ---------- */
-loadState(); renderVisibleChunks(); spawnBotsRandomly(BOT_COUNT); refreshUI();
-setInterval(processTaxes,1000);
-setInterval(()=>{for(const id in state.bots) botMoveStep(id);},BOT_MOVE_INTERVAL);
-setInterval(()=>{for(const id in state.bots) botTryAttack(id);},BOT_ATTACK_INTERVAL);
-setInterval(()=>{renderVisibleChunks(); refreshUI();},5000);
-setInterval(showNews,10000+Math.random()*5000);
-map.on('moveend',renderVisibleChunks);
-
-document.getElementById('resetBtn').onclick=resetAll;
+/* ---------- UI ---------- */
+function refreshUI(){document.getElementById('money').textContent=state.money; document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;}
 document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
+document.getElementById('resetBtn').onclick=()=>{ if(confirm('Сбросить прогресс?')) resetAll(); }
 
+/* ---------- map click for chunk ---------- */
+map.on('click',function(e){
+  const key=chunkKeyFromLatLng(e.latlng.lat,e.latlng.lng);
+  state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
+  renderChunk(key,true); selectChunk(key);
+});
+
+/* ===================== main loop ===================== */
+loadState(); refreshUI(); 
+spawnBotsRandomly(BOT_COUNT);
+
+setInterval(()=>{processTaxes(); refreshUI();},1000);
+setInterval(()=>{showRandomNews();}, 10000+Math.random()*5000);
+setInterval(()=>{for(const id in state.bots) botMoveStep(id);}, BOT_MOVE_INTERVAL);
+setInterval(()=>{for(const id in state.bots) botTryAttack(id);}, BOT_ATTACK_INTERVAL);
 </script>
 </body>
 </html>
