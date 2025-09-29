@@ -33,9 +33,26 @@ a.smalllink { color:#93c5fd; text-decoration:none; }
   border-radius: 8px;
   font-size: 14px;
   font-family: Arial, sans-serif;
-  z-index: 1000; /* поверх карты */
+  z-index: 1000;
   pointer-events: auto;
 }
+
+#newsPopup {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #f3f4f6;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  z-index: 1100;
+  display: none;
+}
+#newsPopup button { margin-left:12px; background:#ef4444; }
 </style>
 </head>
 <body>
@@ -57,14 +74,18 @@ a.smalllink { color:#93c5fd; text-decoration:none; }
 <div id="log" class="log"></div>
 <div id="leaderboardContainer"></div>
 <div style="margin-top:12px" class="small">
-Прототип использует Leaflet + localStorage. Можно изменять параметры прямо в коде: количество ботов, размер чанка, силу, скорость и т.д.
+Прототип использует Leaflet + localStorage. Можно изменять параметры прямо в коде.
 </div>
 </div>
 
-<!-- Панель налогов -->
 <div id="taxPanel">
-  Ежемесячная выплата: <span id="taxAmount">0</span><br>
+  Налог/Доход: <span id="taxAmount">0</span><br>
   Через: <span id="taxTimer">30</span> сек
+</div>
+
+<div id="newsPopup">
+  <span id="newsText"></span>
+  <button id="closeNewsBtn">Закрыть</button>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -78,15 +99,11 @@ const BOT_ATTACK_INTERVAL = 12000;
 const PLAYER_ATTACK_COST = 200;
 const CHUNK_BASE_COST = 500;
 const STRUCTURE_COST = 300;
-const STRUCTURE_REWARD = 150; 
-const MAX_BOT_POWER = 150;
-const MAX_PLAYER_POWER = 150;
-const KM_TO_M = 1000;
-
-// Налоги
-const TAX_INTERVAL = 30; // каждые 30 сек
+const TAX_INTERVAL = 30;
 const TAX_PER_CHUNK = 550;
-const TAX_PER_HOUSE = 100;
+const TAX_PER_HOUSE = 50;
+const HOUSE_INCOME = 150;
+const KM_TO_M = 1000;
 
 let taxTimer = TAX_INTERVAL;
 
@@ -140,11 +157,7 @@ function renderChunk(key){
   if(state.markers.chunkRects[key]) return;
   const bounds = chunkBoundsFromKey(key);
   const rect = L.rectangle(bounds,{
-    color:'#ff0000',
-    weight:2.5,
-    fill:true,
-    fillOpacity:0.7,
-    interactive:true
+    color:'#ff0000', weight:2.5, fill:true, fillOpacity:0.7, interactive:true
   }).addTo(map);
   rect.on('click',()=>selectChunk(key));
   state.markers.chunkRects[key]=rect;
@@ -178,12 +191,24 @@ function selectChunk(key){
     </div>
   `;
 
-  if(owner===null) document.getElementById('buyBtn').onclick=()=>{if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег');return;} state.money-=CHUNK_BASE_COST; state.chunks[key]={owner:'player',structures:[],powerModifier:0}; saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);};
+  if(owner===null) document.getElementById('buyBtn').onclick=()=>{
+    if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег'); return;}
+    state.money-=CHUNK_BASE_COST;
+    state.chunks[key]={owner:'player',structures:[],powerModifier:0};
+    saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);
+  };
 
-  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег');return;} state.money-=PLAYER_ATTACK_COST; const success=resolveBattle('player',owner,key); if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);} else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`); saveState(); refreshUI(); updateChunkStyle(key);};
+  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{
+    if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег'); return;}
+    state.money-=PLAYER_ATTACK_COST;
+    const success=resolveBattle('player',owner,key);
+    if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);}
+    else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`);
+    saveState(); refreshUI(); updateChunkStyle(key);
+  };
 
   if(owner==='player') document.getElementById('buildBtn').onclick=()=>{
-    if(state.money<STRUCTURE_COST){alert('Недостаточно денег');return;}
+    if(state.money<STRUCTURE_COST){alert('Недостаточно денег'); return;}
     state.money-=STRUCTURE_COST;
     state.chunks[key].structures.push('House Sticker');
     const pos=randomPointInChunk(key);
@@ -198,10 +223,10 @@ function selectChunk(key){
 /* ---------- battle ---------- */
 function resolveBattle(attacker,defenderBotId,chunkKey){
   let aPower=70+Math.random()*50+(state.chunks[chunkKey]?.structures.length||0)*5;
-  aPower=Math.min(aPower,MAX_PLAYER_POWER)*(0.7+Math.random()*0.6);
+  aPower=Math.min(aPower,150)*(0.7+Math.random()*0.6);
   const bot=state.bots[defenderBotId];
   let dPower=(bot?.power||60)+(state.chunks[chunkKey]?.powerModifier||0);
-  dPower=Math.min(dPower,MAX_BOT_POWER)*(0.7+Math.random()*0.6);
+  dPower=Math.min(dPower,150)*(0.7+Math.random()*0.6);
   return aPower>=dPower;
 }
 
@@ -216,7 +241,8 @@ function spawnBotsRandomly(count){
     state.bots[id]=bot;
     state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
     if(!state.chunks[key].owner) state.chunks[key].owner=id;
-    else if(Math.random()<0.3){const adj=getAdjacentKeys(key); const neigh=adj[Math.floor(Math.random()*adj.length)]; state.chunks[neigh]=state.chunks[neigh]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[neigh].owner) state.chunks[neigh].owner=id; bot.chunkKey=neigh;}
+    else if(Math.random()<0.3){const adj=getAdjacentKeys(key); const neigh=adj[Math.floor(Math.random()*adj.length)];
+      state.chunks[neigh]=state.chunks[neigh]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[neigh].owner) state.chunks[neigh].owner=id; bot.chunkKey=neigh;}
   }
   saveState(); renderAllBots(); renderVisibleChunks(); log(`Распределено ${count} ботов по миру`);
 }
@@ -234,46 +260,74 @@ function renderVisibleChunks(){
   const [xEndMeters,yEndMeters]=latLngToMeters(Math.min(b.getNorth(),90),Math.min(b.getEast(),180));
   const xStart=Math.floor(xStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), xEnd=Math.floor(xEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
   const yStart=Math.floor(yStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), yEnd=Math.floor(yEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
-  for(let xi=xStart-1;xi<=xEnd+1;xi++){for(let yi=yStart-1;yi<=yEnd+1;yi++){renderChunk(`${xi}_${yi}`);} }
+  for(let xi=xStart;xi<=xEnd;xi++) for(let yi=yStart;yi<=yEnd;yi++){
+    const key=`${xi}_${yi}`; renderChunk(key);
+  }
 }
 
-/* ---------- UI ---------- */
-function refreshUI(){
-  document.getElementById('money').textContent=state.money;
-  document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
-  updateTaxPanel();
-}
-function updateTaxPanel(){
-  const taxAmount=(Object.values(state.chunks).filter(c=>c.owner==='player').length*TAX_PER_CHUNK
-                    +Object.values(state.chunks).filter(c=>c.owner==='player').reduce((a,c)=>a+c.structures.length,0)*TAX_PER_HOUSE);
-  document.getElementById('taxAmount').textContent=taxAmount;
+/* ---------- taxes & income ---------- */
+function processTaxes(){
+  taxTimer--; if(taxTimer<=0){ taxTimer=TAX_INTERVAL;
+    let tax=0, income=0;
+    const chunksOwned=Object.values(state.chunks).filter(c=>c.owner==='player');
+    tax+=chunksOwned.reduce((sum,c)=>sum + c.structures.length*TAX_PER_HOUSE,0);
+    income+=chunksOwned.reduce((sum,c)=>sum + c.structures.length*HOUSE_INCOME,0);
+    tax+=chunksOwned.length*TAX_PER_CHUNK;
+    state.money=state.money - tax + income;
+    log(`Начислен доход: ${income} монет за дома, уплачен налог: ${tax} монет`);
+    saveState(); refreshUI();
+  }
+  const chunksOwned=Object.values(state.chunks).filter(c=>c.owner==='player');
+  const totalIncome = chunksOwned.reduce((sum,c)=>sum + c.structures.length*HOUSE_INCOME,0);
+  const totalTax = chunksOwned.reduce((sum,c)=>sum + c.structures.length*TAX_PER_HOUSE,0)+chunksOwned.length*TAX_PER_CHUNK;
+  document.getElementById('taxAmount').textContent=`Налог: ${totalTax}, Доход: ${totalIncome}`;
   document.getElementById('taxTimer').textContent=taxTimer;
 }
 
-/* ---------- tax interval ---------- */
-setInterval(()=>{
-  taxTimer--;
-  if(taxTimer<=0){
-    const taxAmount=(Object.values(state.chunks).filter(c=>c.owner==='player').length*TAX_PER_CHUNK
-                      +Object.values(state.chunks).filter(c=>c.owner==='player').reduce((a,c)=>a+c.structures.length,0)*TAX_PER_HOUSE);
-    state.money-=taxAmount;
-    log(`Игрок заплатил налоги: ${taxAmount}`);
-    taxTimer=TAX_INTERVAL;
-    refreshUI();
-  } else updateTaxPanel();
-},1000);
+/* ---------- UI refresh ---------- */
+function refreshUI(){
+  document.getElementById('money').textContent=state.money;
+  document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
+}
 
-/* ---------- map events ---------- */
-map.on('moveend', renderVisibleChunks);
+/* ---------- news popup ---------- */
+const newsList=[
+  "В стране бота был огромный пожар.",
+  "Бот объявил новые законы.",
+  "Произошёл взрыв на складе ресурсов.",
+  "В стране игрока забастовка населения.",
+  "Боты усиливают оборону своих чанков.",
+  "Игроки нашли секретные ресурсы.",
+  "Боты начали строительство новых домов.",
+  "В столице игрока введён комендантский час.",
+  "Произошла утечка информации о военных планах ботов.",
+  "В стране игрока появился новый лидер.",
+  "Боты получили подкрепление из соседних стран.",
+  "Игрок потерял чанк в результате атаки бота.",
+  "Сильный шторм разрушил дома ботов.",
+  "Игроки обменялись технологиями с другими странами.",
+  "Боты захватили ключевой ресурсный чанк.",
+  "На границе стран произошёл инцидент.",
+  "Новая структура увеличила доход игрока.",
+  "В стране бота вспышка эпидемии.",
+  "Игроки проводят демонстрации протеста.",
+  "Боты укрепили свои границы дополнительными строениями."
+];
+function showNews(){ const n=newsList[Math.floor(Math.random()*newsList.length)]; const popup=document.getElementById('newsPopup'); document.getElementById('newsText').textContent=n; popup.style.display='block'; setTimeout(()=>{popup.style.display='none';},13000);}
+document.getElementById('closeNewsBtn').onclick=()=>{document.getElementById('newsPopup').style.display='none';}
 
-/* ---------- кнопки ---------- */
-document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
-document.getElementById('resetBtn').onclick=()=>{if(confirm('Сбросить все данные?')) resetAll();};
-
-/* ---------- init ---------- */
-loadState(); refreshUI(); renderVisibleChunks(); spawnBotsRandomly(BOT_COUNT);
+/* ---------- main loop ---------- */
+loadState(); renderVisibleChunks(); spawnBotsRandomly(BOT_COUNT); refreshUI();
+setInterval(processTaxes,1000);
 setInterval(()=>{for(const id in state.bots) botMoveStep(id);},BOT_MOVE_INTERVAL);
 setInterval(()=>{for(const id in state.bots) botTryAttack(id);},BOT_ATTACK_INTERVAL);
+setInterval(()=>{renderVisibleChunks(); refreshUI();},5000);
+setInterval(showNews,10000+Math.random()*5000);
+map.on('moveend',renderVisibleChunks);
+
+document.getElementById('resetBtn').onclick=resetAll;
+document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
+
 </script>
 </body>
 </html>
