@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Война чанков — карта с ботами</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html,body,#map { height: 100%; margin: 0; padding: 0; }
+#map { position: absolute; left: 0; right: 320px; top: 0; bottom: 0; }
+#sidebar { position: absolute; right: 0; top: 0; width: 320px; bottom: 0; background: #1e293b; color: #e6eef8; padding: 12px; box-sizing: border-box; font-family: Arial, sans-serif; overflow-y: auto; }
+h2 { margin: 6px 0 12px; font-size: 18px; }
+.info-row { margin: 8px 0; }
+button { background: #2563eb; color: white; border: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.btn-ghost { background: #334155; }
+.chunk-info { margin-top:8px; background:#081226; padding:8px; border-radius:6px; }
+.owner-player { color: #7ee787; }
+.owner-bot { color: #ffb86b; }
+.owner-none { color: #9aa7b2; }
+.small { font-size: 13px; color:#a8b3c7; }
+.structure { font-size:12px; padding:4px 6px; background:#1f2937; border-radius:4px; display:inline-block; margin-right:6px; }
+.money { font-weight:700; font-size:18px; }
+.log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:220px; overflow:auto; }
+a.smalllink { color:#93c5fd; text-decoration:none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="sidebar">
+<h2>Война чанков — прототип</h2>
+<div class="info-row">Деньги: <span id="money" class="money">—</span></div>
+<div class="info-row small">Чанк = квадрат <strong id="chunkSizeDisplay"></strong>×<strong id="chunkSizeDisplay2"></strong> км</div>
+<div class="info-row">
+  <button id="spawnBotsBtn">Распределить ботов заново (сброс)</button>
+  <button id="resetBtn" class="btn-ghost">Сброс прогресса</button>
+</div>
+<hr style="border-color:#16304a">
+<div id="selectedTitle" class="small">Кликните по карте, чтобы выбрать чанк</div>
+<div id="selectedInfo" class="chunk-info" style="display:none"></div>
+<hr style="border-color:#16304a">
+<div class="info-row"><strong>Мои чанки:</strong> <span id="myChunksCount">0</span></div>
+<div class="info-row"><strong>Лог:</strong></div>
+<div id="log" class="log"></div>
+<div style="margin-top:12px" class="small">
+Прототип использует Leaflet + localStorage. Можно изменять параметры прямо в коде: количество ботов, размер чанка, силу, скорость и т.д.
+</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ===================== Параметры игры ===================== */
+const CHUNK_SIZE_KM = 150;
+const INITIAL_MONEY = 5000;
+const BOT_COUNT = 120;
+const BOT_MOVE_INTERVAL = 8000;
+const BOT_ATTACK_INTERVAL = 12000;
+const PLAYER_ATTACK_COST = 200;
+const CHUNK_BASE_COST = 500;
+const STRUCTURE_COST = 300;
+const STRUCTURE_REWARD = 150; // награда за постройку каждые 2 сек
+const MAX_BOT_POWER = 150;
+const MAX_PLAYER_POWER = 150;
+const KM_TO_M = 1000;
+
+/* ===================== Инициализация ===================== */
+const map = L.map('map', { worldCopyJump:true }).setView([20,0], 2);
+// яркая карта
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+
+document.getElementById('chunkSizeDisplay').textContent = CHUNK_SIZE_KM;
+document.getElementById('chunkSizeDisplay2').textContent = CHUNK_SIZE_KM;
+
+const state = {
+  money: INITIAL_MONEY,
+  chunks: {},
+  bots: {},
+  markers: { chunkRects: {}, botMarkers: {}, structures: {} },
+  selectedChunk: null,
+};
+
+/* ---------- localStorage ---------- */
+function saveState(){ localStorage.setItem('war_chunks_v1', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
+function loadState(){
+  const raw = localStorage.getItem('war_chunks_v1');
+  if(!raw) return false;
+  try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; return true;} 
+  catch(e){console.error(e); return false;}
+}
+function resetAll(){ localStorage.removeItem('war_chunks_v1'); location.reload(); }
+
+/* ---------- гео утилиты ---------- */
+function latLngToMeters(lat,lng){const R=6378137; return [R*lng*Math.PI/180, R*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))];}
+function metersToLatLng(x,y){const R=6378137; return [(2*Math.atan(Math.exp(y/R))-Math.PI/2)*180/Math.PI, x*180/(Math.PI*R)];}
+function chunkKeyFromLatLng(lat,lng){const [xMeters,yMeters]=latLngToMeters(lat,lng);return `${Math.floor(xMeters/(CHUNK_SIZE_KM*KM_TO_M))}_${Math.floor(yMeters/(CHUNK_SIZE_KM*KM_TO_M))}`;}
+const chunkBoundsCache={};
+function chunkBoundsFromKey(key){
+  if(chunkBoundsCache[key]) return chunkBoundsCache[key];
+  const [xIndex,yIndex]=key.split('_').map(Number);
+  const x1=xIndex*CHUNK_SIZE_KM*KM_TO_M, y1=yIndex*CHUNK_SIZE_KM*KM_TO_M;
+  const x2=x1+CHUNK_SIZE_KM*KM_TO_M, y2=y1+CHUNK_SIZE_KM*KM_TO_M;
+  return chunkBoundsCache[key]=[metersToLatLng(x1,y1), metersToLatLng(x2,y2)];
+}
+function randomPointInChunk(key){
+  const bounds=chunkBoundsFromKey(key);
+  return [bounds[0][0]+Math.random()*(bounds[1][0]-bounds[0][0]), bounds[0][1]+Math.random()*(bounds[1][1]-bounds[0][1])];
+}
+
+/* ---------- logging ---------- */
+function log(msg){const el=document.getElementById('log'); el.innerHTML=`[${new Date().toLocaleTimeString()}] ${msg}<br>`+el.innerHTML;}
+
+/* ---------- chunks ---------- */
+function renderChunk(key){
+  if(state.markers.chunkRects[key]) return;
+  const bounds = chunkBoundsFromKey(key);
+  const rect = L.rectangle(bounds,{
+    color:'#ff0000',
+    weight:2.5,
+    fill:true,
+    fillOpacity:0.7,
+    interactive:true
+  }).addTo(map);
+  rect.on('click',()=>selectChunk(key));
+  state.markers.chunkRects[key]=rect;
+  updateChunkStyle(key);
+}
+function updateChunkStyle(key){
+  const rect=state.markers.chunkRects[key]; if(!rect) return;
+  const data = state.chunks[key]; 
+  if(!data||!data.owner) rect.setStyle({color:'#1e293b',fillOpacity:0.7});
+  else if(data.owner==='player') rect.setStyle({color:'#17a34a',fillOpacity:0.7});
+  else { const bot=state.bots[data.owner]; rect.setStyle({color:bot?bot.color:'#ff8a65',fillOpacity:0.7}); }
+}
+
+/* ---------- selection ---------- */
+function selectChunk(key){
+  state.selectedChunk=key; renderChunk(key);
+  const info=document.getElementById('selectedInfo'); info.style.display='block';
+  const chunk=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
+  const owner=chunk.owner;
+  const ownerText=owner==='player'?'<span class="owner-player">Игрок</span>':owner?`<span class="owner-bot">Бот ${owner}</span>`:'<span class="owner-none">Свободен</span>';
+  const bounds=chunkBoundsFromKey(key);
+  const centerLat=(bounds[0][0]+bounds[1][0])/2, centerLng=(bounds[0][1]+bounds[1][1])/2;
+  info.innerHTML=`
+    <div class="small">Чанк: <strong>${key}</strong></div>
+    <div class="small">Центр: ${centerLat.toFixed(2)}, ${centerLng.toFixed(2)}</div>
+    <div style="margin-top:8px">Владелец: ${ownerText}</div>
+    <div style="margin-top:6px">Структуры: ${chunk.structures.length||0} ${chunk.structures.map(s=>`<span class="structure">${s}</span>`).join('')}</div>
+    <div style="margin-top:8px">
+      ${owner===null?`<button id="buyBtn">Купить (${CHUNK_BASE_COST})</button>`:''}
+      ${owner&&owner!=='player'?`<button id="attackBtn">Атаковать (${PLAYER_ATTACK_COST})</button>`:''}
+      ${owner==='player'?`<button id="buildBtn">Построить (${STRUCTURE_COST})</button>`:''}
+    </div>
+  `;
+  
+  if(owner===null) document.getElementById('buyBtn').onclick=()=>{if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег');return;} state.money-=CHUNK_BASE_COST; state.chunks[key]={owner:'player',structures:[],powerModifier:0}; saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);};
+  
+  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег');return;} state.money-=PLAYER_ATTACK_COST; const success=resolveBattle('player',owner,key); if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);} else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`); saveState(); refreshUI(); updateChunkStyle(key);};
+  
+  if(owner==='player') document.getElementById('buildBtn').onclick=()=>{
+    if(state.money<STRUCTURE_COST){alert('Недостаточно денег');return;}
+    state.money-=STRUCTURE_COST;
+    state.chunks[key].structures.push('House Sticker');
+    
+    const pos=randomPointInChunk(key);
+    const marker=L.marker(pos).addTo(map).bindPopup('Стикер дома');
+    if(!state.markers.structures[key]) state.markers.structures[key]=[];
+    state.markers.structures[key].push(marker);
+
+    log(`Игрок построил House Sticker в чанке ${key}`);
+    saveState(); refreshUI(); updateChunkStyle(key);
+  };
+}
+
+/* ---------- battle ---------- */
+function resolveBattle(attacker,defenderBotId,chunkKey){
+  let aPower=70+Math.random()*50+(state.chunks[chunkKey]?.structures.length||0)*5;
+  aPower=Math.min(aPower,MAX_PLAYER_POWER)*(0.7+Math.random()*0.6);
+  const bot=state.bots[defenderBotId];
+  let dPower=(bot?.power||60)+(state.chunks[chunkKey]?.powerModifier||0);
+  dPower=Math.min(dPower,MAX_BOT_POWER)*(0.7+Math.random()*0.6);
+  return aPower>=dPower;
+}
+
+/* ---------- bots ---------- */
+function spawnBotsRandomly(count){
+  for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0);
+  state.bots={};
+  for(let i=0;i<count;i++){
+    const id=`B${i+1}`, lat=Math.random()*180-90, lng=Math.random()*360-180;
+    const key=chunkKeyFromLatLng(lat,lng);
+    const bot={id,name:`Bot-${i+1}`,color:getColorForIndex(i),chunkKey:key,power:40+Math.floor(Math.random()*90)};
+    state.bots[id]=bot;
+    state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
+    if(!state.chunks[key].owner) state.chunks[key].owner=id;
+    else if(Math.random()<0.3){const adj=getAdjacentKeys(key); const neigh=adj[Math.floor(Math.random()*adj.length)]; state.chunks[neigh]=state.chunks[neigh]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[neigh].owner) state.chunks[neigh].owner=id; bot.chunkKey=neigh;}
+  }
+  saveState(); renderAllBots(); renderVisibleChunks(); log(`Распределено ${count} ботов по миру`);
+}
+function getColorForIndex(i){const p=['#fb923c','#f97316','#fb7185','#f472b6','#60a5fa','#7c3aed','#34d399','#f59e0b','#ef4444','#10b981']; return p[i%p.length];}
+function renderAllBots(){for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0); state.markers.botMarkers={}; for(const id in state.bots) placeBotMarker(id);}
+function placeBotMarker(botId){const bot=state.bots[botId]; const pos=randomPointInChunk(bot.chunkKey); state.markers.botMarkers[botId]=L.circleMarker(pos,{radius:8,color:bot.color,fillColor:bot.color,fillOpacity:0.9}).addTo(map).bindPopup(`<b>${bot.name}</b><br>Power: ${bot.power}<br>Chunk: ${bot.chunkKey}`);}
+function botMoveStep(botId){const bot=state.bots[botId]; if(!bot) return; const adj=getAdjacentKeys(bot.chunkKey); if(!adj.length||Math.random()<0.35) return; const next=adj[Math.floor(Math.random()*adj.length)]; bot.chunkKey=next; state.chunks[next]=state.chunks[next]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[next].owner && Math.random()<0.7){state.chunks[next].owner=botId; log(`${bot.name} захватил чанк ${next}`); updateChunkStyle(next);} saveState(); placeBotMarker(botId);}
+function botTryAttack(botId){const bot=state.bots[botId]; if(!bot) return; const targets=getAdjacentKeys(bot.chunkKey).filter(k=>state.chunks[k]?.owner==='player'); if(!targets.length) return; const target=targets[Math.floor(Math.random()*targets.length)]; const aPower=bot.power*(0.8+Math.random()*0.6); const dPower=60+(state.chunks[target]?.powerModifier||0)+(state.chunks[target]?.structures.length||0)*8; if(aPower>dPower){state.chunks[target].owner=botId; log(`${bot.name} победил и захватил чанк ${target}`); updateChunkStyle(target);} else if(Math.random()<0.25) log(`${bot.name} атаковал ${target}, но не смог захватить`); saveState();}
+function getAdjacentKeys(key){const [x,y]=key.split('_').map(Number); return [`${x+1}_${y}`,`${x-1}_${y}`,`${x}_${y+1}`,`${x}_${y-1}`];}
+
+/* ---------- visible chunks ---------- */
+function renderVisibleChunks(){
+  const b=map.getBounds();
+  const [xStartMeters,yStartMeters]=latLngToMeters(Math.max(b.getSouth(),-90),Math.max(b.getWest(),-180));
+  const [xEndMeters,yEndMeters]=latLngToMeters(Math.min(b.getNorth(),90),Math.min(b.getEast(),180));
+  const xStart=Math.floor(xStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), xEnd=Math.floor(xEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
+  const yStart=Math.floor(yStartMeters/(CHUNK_SIZE_KM*KM_TO_M)), yEnd=Math.floor(yEndMeters/(CHUNK_SIZE_KM*KM_TO_M));
+  for(let xi=xStart-1;xi<=xEnd+1;xi++){for(let yi=yStart-1;yi<=yEnd+1;yi++){renderChunk(`${xi}_${yi}`);} }
+}
+
+/* ---------- UI ---------- */
+function refreshUI(){
+  document.getElementById('money').textContent=state.money.toFixed(2);
+  document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
+}
+map.on('moveend',()=>renderVisibleChunks());
+document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
+document.getElementById('resetBtn').onclick=()=>{if(confirm('Сбросить всё?')) resetAll();};
+
+/* ---------- init ---------- */
+if(!loadState()) spawnBotsRandomly(BOT_COUNT);
+renderVisibleChunks(); refreshUI();
+
+/* ---------- bot loops ---------- */
+setInterval(()=>{for(const id in state.bots) botMoveStep(id); renderVisibleChunks(); refreshUI();}, BOT_MOVE_INTERVAL);
+setInterval(()=>{for(const id in state.bots) botTryAttack(id); renderVisibleChunks(); refreshUI();}, BOT_ATTACK_INTERVAL);
+
+/* ---------- passive reward за дома ---------- */
+setInterval(()=>{
+  let totalHouses=0;
+  for(const key in state.chunks){
+    const chunk=state.chunks[key];
+    const count=chunk.structures.filter(s=>'House Sticker'===s).length;
+    if(count>0){ totalHouses+=count; state.money+=count*STRUCTURE_REWARD; }
+  }
+  if(totalHouses>0) refreshUI();
+},2000); // каждые 2 сек
+
+</script>
+</body>
+</html>
