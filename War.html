@@ -22,6 +22,20 @@ button { background: #2563eb; color: white; border: none; padding: 8px 10px; bor
 .money { font-weight:700; font-size:18px; }
 .log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:220px; overflow:auto; }
 a.smalllink { color:#93c5fd; text-decoration:none; }
+
+#taxPanel {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  background: #111827;
+  color: #f3f4f6;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: Arial, sans-serif;
+  z-index: 1000; /* поверх карты */
+  pointer-events: auto;
+}
 </style>
 </head>
 <body>
@@ -47,6 +61,12 @@ a.smalllink { color:#93c5fd; text-decoration:none; }
 </div>
 </div>
 
+<!-- Панель налогов -->
+<div id="taxPanel">
+  Ежемесячная выплата: <span id="taxAmount">0</span><br>
+  Через: <span id="taxTimer">30</span> сек
+</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 /* ===================== Параметры игры ===================== */
@@ -62,6 +82,13 @@ const STRUCTURE_REWARD = 150;
 const MAX_BOT_POWER = 150;
 const MAX_PLAYER_POWER = 150;
 const KM_TO_M = 1000;
+
+// Налоги
+const TAX_INTERVAL = 30; // каждые 30 сек
+const TAX_PER_CHUNK = 550;
+const TAX_PER_HOUSE = 100;
+
+let taxTimer = TAX_INTERVAL;
 
 /* ===================== Инициализация ===================== */
 const map = L.map('map', { worldCopyJump:true }).setView([20,0], 2);
@@ -150,11 +177,11 @@ function selectChunk(key){
       ${owner==='player'?`<button id="buildBtn">Построить (${STRUCTURE_COST})</button>`:''}
     </div>
   `;
-  
+
   if(owner===null) document.getElementById('buyBtn').onclick=()=>{if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег');return;} state.money-=CHUNK_BASE_COST; state.chunks[key]={owner:'player',structures:[],powerModifier:0}; saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);};
-  
+
   if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег');return;} state.money-=PLAYER_ATTACK_COST; const success=resolveBattle('player',owner,key); if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);} else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`); saveState(); refreshUI(); updateChunkStyle(key);};
-  
+
   if(owner==='player') document.getElementById('buildBtn').onclick=()=>{
     if(state.money<STRUCTURE_COST){alert('Недостаточно денег');return;}
     state.money-=STRUCTURE_COST;
@@ -212,68 +239,41 @@ function renderVisibleChunks(){
 
 /* ---------- UI ---------- */
 function refreshUI(){
-  document.getElementById('money').textContent=state.money.toFixed(2);
+  document.getElementById('money').textContent=state.money;
   document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;
+  updateTaxPanel();
+}
+function updateTaxPanel(){
+  const taxAmount=(Object.values(state.chunks).filter(c=>c.owner==='player').length*TAX_PER_CHUNK
+                    +Object.values(state.chunks).filter(c=>c.owner==='player').reduce((a,c)=>a+c.structures.length,0)*TAX_PER_HOUSE);
+  document.getElementById('taxAmount').textContent=taxAmount;
+  document.getElementById('taxTimer').textContent=taxTimer;
 }
 
-/* ---------- Leaderboard ---------- */
-const leaderboardDiv = document.createElement('div');
-leaderboardDiv.innerHTML = `<h2>Таблица лидеров</h2>
-  <div style="margin-bottom:6px"><strong>По чанкам:</strong></div>
-  <ol id="leaderboardChunks"></ol>
-  <div style="margin-top:6px;margin-bottom:6px"><strong>По деньгам:</strong></div>
-  <ol id="leaderboardMoney"></ol>
-`;
-document.getElementById('leaderboardContainer').appendChild(leaderboardDiv);
+/* ---------- tax interval ---------- */
+setInterval(()=>{
+  taxTimer--;
+  if(taxTimer<=0){
+    const taxAmount=(Object.values(state.chunks).filter(c=>c.owner==='player').length*TAX_PER_CHUNK
+                      +Object.values(state.chunks).filter(c=>c.owner==='player').reduce((a,c)=>a+c.structures.length,0)*TAX_PER_HOUSE);
+    state.money-=taxAmount;
+    log(`Игрок заплатил налоги: ${taxAmount}`);
+    taxTimer=TAX_INTERVAL;
+    refreshUI();
+  } else updateTaxPanel();
+},1000);
 
-function updateLeaderboard(){
-  const chunkCounts={};
-  for(const key in state.chunks){const owner=state.chunks[key].owner;if(!owner) continue; chunkCounts[owner]=(chunkCounts[owner]||0)+1;}
-  
-  // Деньги игрока
-  const moneyList=[{name:'Игрок',money:state.money}];
-  // Деньги ботов считаем как reward за их структуры
-  for(const id in state.bots){
-    const bot=state.bots[id]; 
-    const ownedChunks = Object.values(state.chunks).filter(c=>c.owner===id);
-    let botMoney = 0;
-    for(const c of ownedChunks){botMoney+=c.structures.filter(s=>'House Sticker'===s).length*STRUCTURE_REWARD;}
-    moneyList.push({name:bot.name,money:botMoney});
-  }
+/* ---------- map events ---------- */
+map.on('moveend', renderVisibleChunks);
 
-  // Чанки
-  const sortedChunks=Object.entries(chunkCounts).sort((a,b)=>b[1]-a[1]);
-  const lbChunks=document.getElementById('leaderboardChunks'); lbChunks.innerHTML='';
-  sortedChunks.forEach(([owner,count])=>{const name=owner==='player'?'Игрок':state.bots[owner]?.name||owner; const li=document.createElement('li'); li.innerHTML=`${name}: ${count} чанков`; lbChunks.appendChild(li);});
-
-  // Деньги
-  const lbMoney=document.getElementById('leaderboardMoney'); lbMoney.innerHTML='';
-  moneyList.sort((a,b)=>b.money-a.money).forEach(p=>{const li=document.createElement('li'); li.innerHTML=`${p.name}: ${p.money.toFixed(2)}`; lbMoney.appendChild(li);});
-}
-
-map.on('moveend',()=>renderVisibleChunks());
+/* ---------- кнопки ---------- */
 document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
-document.getElementById('resetBtn').onclick=()=>{if(confirm('Сбросить всё?')) resetAll();};
+document.getElementById('resetBtn').onclick=()=>{if(confirm('Сбросить все данные?')) resetAll();};
 
 /* ---------- init ---------- */
-if(!loadState()) spawnBotsRandomly(BOT_COUNT);
-renderVisibleChunks(); refreshUI(); updateLeaderboard();
-
-/* ---------- bot loops ---------- */
-setInterval(()=>{for(const id in state.bots) botMoveStep(id); renderVisibleChunks(); refreshUI(); updateLeaderboard();}, BOT_MOVE_INTERVAL);
-setInterval(()=>{for(const id in state.bots) botTryAttack(id); renderVisibleChunks(); refreshUI(); updateLeaderboard();}, BOT_ATTACK_INTERVAL);
-
-/* ---------- passive reward за дома ---------- */
-setInterval(()=>{
-  let totalHouses=0;
-  for(const key in state.chunks){
-    const chunk=state.chunks[key];
-    const count=chunk.structures.filter(s=>'House Sticker'===s).length;
-    if(count>0){ totalHouses+=count; state.money+=count*STRUCTURE_REWARD; }
-  }
-  if(totalHouses>0){ refreshUI(); updateLeaderboard(); }
-},2000);
-
+loadState(); refreshUI(); renderVisibleChunks(); spawnBotsRandomly(BOT_COUNT);
+setInterval(()=>{for(const id in state.bots) botMoveStep(id);},BOT_MOVE_INTERVAL);
+setInterval(()=>{for(const id in state.bots) botTryAttack(id);},BOT_ATTACK_INTERVAL);
 </script>
 </body>
 </html>
