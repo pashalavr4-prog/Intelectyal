@@ -1,529 +1,387 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Война чанков — карта с ботами (Редактор карт)</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Карта с рабочими, ботами и сохранением</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-html,body,#map { height: 100%; margin: 0; padding: 0; }
-#map { position: absolute; left: 0; right: 420px; top: 0; bottom: 0; }
-#sidebar { position: absolute; right: 0; top: 0; width: 420px; bottom: 0; background: #0b1220; color: #e6eef8; padding: 12px; box-sizing: border-box; font-family: Arial, sans-serif; overflow-y: auto; }
-h2 { margin: 6px 0 12px; font-size: 18px; }
-.info-row { margin: 8px 0; }
-button { background: #2563eb; color: white; border: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-.btn-ghost { background: #334155; }
-.chunk-info { margin-top:8px; background:#081226; padding:8px; border-radius:6px; }
-.owner-player { color: #7ee787; }
-.owner-bot { color: #ffb86b; }
-.owner-none { color: #9aa7b2; }
-.small { font-size: 13px; color:#a8b3c7; }
-.structure { font-size:12px; padding:4px 6px; background:#1f2937; border-radius:4px; display:inline-block; margin-right:6px; }
-.money { font-weight:700; font-size:18px; }
-.log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:160px; overflow:auto; }
-.editor-hint { font-size:13px; color:#cbd5e1; margin-top:8px; }
-#editorControls { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap }
-.map-stats { margin-top:6px; font-size:13px; color:#9fb6d6 }
-#mapExportArea { width:100%; height:80px; background:#041021; color:#cfe7ff; padding:6px; border-radius:6px; box-sizing:border-box; margin-top:8px; font-family:monospace; font-size:12px; }
+html, body { margin:0; padding:0; height:100%; background:#111; font-family:sans-serif; }
+#map { width:100%; height:calc(100% - 70px); }
+#ui { height:70px; display:flex; align-items:center; justify-content:space-around; padding:5px 10px; background:#222; color:#fff; box-shadow:0 -2px 5px rgba(0,0,0,0.5);}
+button { padding:6px 12px; cursor:pointer; border:none; border-radius:5px; background:#00aaff; color:#fff; font-weight:bold; transition:0.2s; font-size:14px;}
+button:hover { background:#0088cc; }
+.house, .shop, .factory { font-size:18px; }
+.info { display:flex; flex-direction:column; align-items:center; font-size:14px; }
+.status { position:absolute; bottom:75px; left:50%; transform:translateX(-50%); background:#333; padding:5px 10px; border-radius:5px; color:#fff; font-size:14px; }
+.botLabel { font-size:12px; color:#fff; padding:2px 6px; background:rgba(0,0,0,0.5); border-radius:4px; }
 </style>
 </head>
 <body>
-<div id="map"></div>
-<div id="sidebar">
-<h2>Война чанков — Редактор карт</h2>
-<div class="info-row">Деньги: <span id="money" class="money">—</span></div>
-<div class="info-row small">Чанк = квадрат <strong id="chunkSizeDisplay"></strong>×<strong id="chunkSizeDisplay2"></strong> км</div>
-<div class="info-row">
-  <button id="spawnBotsBtn">Распределить ботов заново (сброс)</button>
-  <button id="resetBtn" class="btn-ghost">Сброс прогресса</button>
-</div>
-<hr style="border-color:#16304a">
-<div id="selectedTitle" class="small">Кликните по карте, чтобы выбрать чанк</div>
-<div id="selectedInfo" class="chunk-info" style="display:none"></div>
-<hr style="border-color:#16304a">
-<div id="editorBlock">
-  <div class="info-row"><strong>Редактор карты:</strong></div>
-  <div id="editorControls">
-    <button id="toggleEditBtn">Включить редактор</button>
-    <button id="toggleModeBtn" class="btn-ghost">Режим: переключать Чанк</button>
-    <button id="finishEditBtn">Завершить редактирование (блокировать спавн)</button>
-    <button id="clearMapBtn" class="btn-ghost">Очистить карту</button>
-  </div>
-  <div class="editor-hint">В редакторе: клик по карте — добавляет/удаляет чанк; при удержании Shift клик — переключает флаг <em>spawnAllowed</em> (разрешён спавн ботов в этом чанке).</div>
-  <div class="map-stats">Всего чанков на карте: <span id="mapChunksCount">0</span>. Разрешено для спавна: <span id="spawnAllowedCount">0</span>.</div>
-  <div style="margin-top:8px">
-    <button id="exportMapBtn">Экспортировать карту (в буфер)</button>
-    <button id="importMapBtn" class="btn-ghost">Импортировать карту (JSON)</button>
-  </div>
-  <textarea id="mapExportArea" placeholder="JSON карты появится здесь при экспорте" readonly></textarea>
-</div>
-<hr style="border-color:#16304a">
-<div class="info-row"><strong>Мои чанки:</strong> <span id="myChunksCount">0</span></div>
-<div class="info-row"><strong>Лог:</strong></div>
-<div id="log" class="log"></div>
-<div id="leaderboardContainer"></div>
-<div style="margin-top:12px" class="small">
-Прототип использует Leaflet + localStorage. Редактор сохраняет карту отдельно и позволяет экспортировать/импортировать JSON.
-</div>
-</div>
 
-<div id="taxPanel">
-  Налог/Доход: <span id="taxAmount">0</span><br>
-  Через: <span id="taxTimer">30</span> сек
+<div id="map"></div>
+<div id="ui">
+  <div class="info">💰 <span id="coins">5000</span></div>
+  <div class="info">👥 <span id="population">0</span></div>
+  <button id="buildHouseBtn">Дом (100)</button>
+  <button id="buildShopBtn">Магазин (350)</button>
+  <button id="buildFactoryBtn">Фабрика (850)</button>
+  <button id="saveBtn">💾 Сохранить</button>
+  <button id="resetBtn">🗑️ Сбросить</button>
 </div>
+<div class="status" id="workStatus">💼 Рабочих нет / Все здания не работают</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-/* ===================== Параметры игры ===================== */
-const CHUNK_SIZE_KM = 16;
-const INITIAL_MONEY = 5000;
-const BOT_COUNT = 120;
-const BOT_MOVE_INTERVAL = 8000;
-const BOT_ATTACK_INTERVAL = 12000;
-const PLAYER_ATTACK_COST = 200;
-const CHUNK_BASE_COST = 500;
-const STRUCTURE_COST = 300;
-const TAX_INTERVAL = 30;
-const TAX_PER_CHUNK = 550;
-const TAX_PER_HOUSE = 50;
-const HOUSE_INCOME = 150;
-const KM_TO_M = 1000;
+// ---- Настройки ----
+const COST_PER_100M=50, ADD_VERTEX_THRESHOLD=100;
+const HOUSE_COST=100, HOUSE_INCOME=50;
+const SHOP_COST=350, SHOP_INCOME=100, SHOP_WORKERS=3;
+const FACTORY_COST=850, FACTORY_INCOME=250, FACTORY_WORKERS=25;
 
-let taxTimer = TAX_INTERVAL;
+let coins=5000, population=0;
+let polygon=null, handles=[], houses=[], shops=[], factories=[];
+let buildMode=null;
 
-/* ===================== Инициализация ===================== */
-const map = L.map('map', { worldCopyJump:true }).setView([20,0], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+// ---- Карта ----
+const map=L.map('map').setView([20,0],13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19,opacity:0.9}).addTo(map);
 
-document.getElementById('chunkSizeDisplay').textContent = CHUNK_SIZE_KM;
-document.getElementById('chunkSizeDisplay2').textContent = CHUNK_SIZE_KM;
+const coinDisplay=document.getElementById('coins');
+const popDisplay=document.getElementById('population');
+const statusDisplay=document.getElementById('workStatus');
+const updateCoins=amt=>{ coins+=amt; coinDisplay.textContent=coins; };
+const updatePopulation=amt=>{ population+=amt; popDisplay.textContent=population; updateStatus(); };
 
-const state = {
-  money: INITIAL_MONEY,
-  chunks: {},          // текущее владение чанками (owner: 'player' | botId | null, structures[]...)
-  bots: {},
-  markers: { chunkRects: {}, botMarkers: {}, structures: {} },
-  selectedChunk: null,
-  // карта как набор «существующих» чанков — редактируемая и экспортируемая
-  mapChunks: {},       // { chunkKey: { exists: true, spawnAllowed: true } }
-  // после завершения редактирования — список разрешённых для спавна чанков
-  allowedSpawnSet: null,
-  editor: { enabled:false, mode:'toggleExists' } // mode: toggleExists | toggleSpawn
-};
-
-/* ---------- localStorage ---------- */
-function saveState(){ localStorage.setItem('war_chunks_v3', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); saveMap(); }
-function loadState(){
-  const raw = localStorage.getItem('war_chunks_v3');
-  if(!raw) return false;
-  try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; } 
-  catch(e){console.error(e);} 
-  loadMap(); return true;
+// ---- Помощники ----
+const distance=(a,b)=>map.distance(a,b);
+function offsetLatLng(latlng, dx_m, dy_m){
+  const R=6378137;
+  const dLat=dy_m/R*(180/Math.PI);
+  const dLng=dx_m/(R*Math.cos(latlng.lat*Math.PI/180))*(180/Math.PI);
+  return [latlng.lat+dLat, latlng.lng+dLng];
 }
 
-function saveMap(){ localStorage.setItem('war_map_v1', JSON.stringify(state.mapChunks)); updateMapCounts(); }
-function loadMap(){ const raw = localStorage.getItem('war_map_v1'); if(!raw) return false; try{ state.mapChunks=JSON.parse(raw)||{}; updateMapCounts(); return true;}catch(e){console.error(e); return false;} }
-function resetAll(){ localStorage.removeItem('war_chunks_v3'); localStorage.removeItem('war_map_v1'); location.reload(); }
-
-/* ---------- гео утилиты ---------- */
-function latLngToMeters(lat,lng){const R=6378137; return [R*lng*Math.PI/180, R*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))];}
-function metersToLatLng(x,y){const R=6378137; return [(2*Math.atan(Math.exp(y/R))-Math.PI/2)*180/Math.PI, x*180/(Math.PI*R)];}
-function chunkKeyFromLatLng(lat,lng){const [xMeters,yMeters]=latLngToMeters(lat,lng);return `${Math.floor(xMeters/(CHUNK_SIZE_KM*KM_TO_M))}_${Math.floor(yMeters/(CHUNK_SIZE_KM*KM_TO_M))}`;}
-const chunkBoundsCache={};
-function chunkBoundsFromKey(key){
-  if(chunkBoundsCache[key]) return chunkBoundsCache[key];
-  const [xIndex,yIndex]=key.split('_').map(Number);
-  const x1=xIndex*CHUNK_SIZE_KM*KM_TO_M, y1=yIndex*CHUNK_SIZE_KM*KM_TO_M;
-  const x2=x1+CHUNK_SIZE_KM*KM_TO_M, y2=y1+CHUNK_SIZE_KM*KM_TO_M;
-  return chunkBoundsCache[key]=[metersToLatLng(x1,y1), metersToLatLng(x2,y2)];
+// ---- Convex Hull (для расширения территорий) ----
+function convexHull(points){
+  if(points.length<=2) return points.slice();
+  points = points.slice().map(p=>[p[0],p[1]]);
+  points.sort((a,b)=>a[0]-b[0] || a[1]-b[1]);
+  const cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+  const lower=[], upper=[];
+  for(let p of points){
+    while(lower.length>=2 && cross(lower[lower.length-2],lower[lower.length-1],p)<=0) lower.pop();
+    lower.push(p);
+  }
+  for(let i=points.length-1;i>=0;i--){
+    let p=points[i];
+    while(upper.length>=2 && cross(upper[upper.length-2],upper[upper.length-1],p)<=0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop(); lower.pop();
+  return lower.concat(upper);
 }
-function randomPointInChunk(key){
-  const bounds=chunkBoundsFromKey(key);
-  return [bounds[0][0]+Math.random()*(bounds[1][0]-bounds[0][0]), bounds[0][1]+Math.random()*(bounds[1][1]-bounds[0][1])];
+
+// ---- Боты ----
+let botColors=['purple','orange','green','yellow','cyan','pink','lime','red','blue','magenta','brown','teal','olive','navy','maroon','aqua','silver','gold','violet','indigo','coral','salmon','plum','tan','khaki'];
+let bots=[];
+const BOT_COUNT=25;
+
+// создаёт пустых ботов (будут инициализированы ниже или при загрузке)
+for(let i=0;i<BOT_COUNT;i++){
+  bots.push({ name:'Бот'+(i+1), color:botColors[i%botColors.length], polygon:null,
+              houses:[], shops:[], factories:[], population:50, coins:5000, markers: {houses:[],shops:[],factories:[]} });
 }
 
-/* ---------- logging ---------- */
-function log(msg){const el=document.getElementById('log'); el.innerHTML=`[${new Date().toLocaleTimeString()}] ${msg}<br>`+el.innerHTML;}
-
-/* ---------- chunks & editor rendering ---------- */
-function renderChunk(key, forceVisible=false){
-  // рисуем только если чанк присутствует на карте (mapChunks[key].exists) или если нужно форсить видимость
-  if(state.markers.chunkRects[key]) return;
-  const exists = state.mapChunks[key]?.exists || forceVisible || !!state.chunks[key];
-  if(!exists) return;
-  const bounds = chunkBoundsFromKey(key);
-  const rect = L.rectangle(bounds,{
-    color:'#ff0000', weight:2.5, fill:true, fillOpacity: (state.chunks[key]?.owner || forceVisible) ? 0.7 : 0.12, interactive:true
-  }).addTo(map);
-  rect.on('click',(e)=>{
-    // в редакторе клики по чанку переключают его существование/флаг спавна
-    const keyLocal = key;
-    if(state.editor.enabled){
-      // если зажата shift — переключаем spawnAllowed
-      if(e.originalEvent && e.originalEvent.shiftKey){
-        toggleSpawnFlag(keyLocal);
-      } else {
-        toggleChunkExists(keyLocal);
-      }
-      return;
-    }
-    selectChunk(keyLocal);
+// ---- Инициализация ботов (если нет сохранения) ----
+function initBotsRandomly(){
+  bots.forEach((bot,idx)=>{
+    // ищем случайную точку (простая генерация около центра)
+    let lat,lng,tries=0;
+    do{
+      lat = 20 + (Math.random()-0.5)*0.6; // чуть рандома вокруг
+      lng = 0 + (Math.random()-0.5)*0.6;
+      tries++;
+      if(tries>200) break;
+    }while(lat<0);
+    const sw=offsetLatLng({lat,lng},0,0);
+    const se=offsetLatLng({lat,lng},400,0);
+    const ne=offsetLatLng({lat,lng},400,400);
+    const nw=offsetLatLng({lat,lng},0,400);
+    const latlngs = [ {lat:sw[0], lng:sw[1]}, {lat:se[0], lng:se[1]}, {lat:ne[0], lng:ne[1]}, {lat:nw[0], lng:nw[1]} ];
+    bot.polygon = L.polygon(latlngs,{color:bot.color, weight:2, opacity:0.9}).addTo(map);
+    // label for bot
+    const center = bot.polygon.getBounds().getCenter();
+    bot.label = L.marker(center, { interactive:false, icon:L.divIcon({className:'botLabel', html:bot.name, iconSize:[60,20]}) }).addTo(map);
   });
-  state.markers.chunkRects[key] = rect;
-  updateChunkStyle(key);
 }
 
-function colorizeChunkWithBot(key, botId){
-  const rect = state.markers.chunkRects[key];
-  const bot = state.bots[botId];
-  if(!rect || !bot) return;
-  const c = bot.color || '#f97316';
-  // мгновенно установить цвет
-  rect.setStyle({color: c, fillColor: c, fillOpacity: 0.75, weight:2.8});
-  // добавить эффект "вспышки" границы
-  rect.bringToFront && rect.bringToFront();
-  setTimeout(()=>{ // затем слегка уменьшить насыщенность
-    rect.setStyle({fillOpacity:0.7, weight:2.5});
-  },700);
-}
-
-function claimChunkByBot(key, botId){
-  if(!state.chunks[key]) state.chunks[key] = { owner: null, structures: [], powerModifier: 0 };
-  state.chunks[key].owner = botId;
-  saveState();
-  // отрисуем и покрасим
-  renderChunk(key,true);
-  colorizeChunkWithBot(key, botId);
-  log(`${state.bots[botId]?.name || botId} захватил чанк ${key}`);
-}
-
-function updateChunkStyle(key){
-  const rect = state.markers.chunkRects[key]; if(!rect) return;
-  const data = state.chunks[key];
-  const mapInfo = state.mapChunks[key] || {exists:false, spawnAllowed:false};
-  // draw editor hint outline for non-spawnable map chunks
-  if(mapInfo.exists && state.editor.enabled){
-    rect.setStyle({dashArray:'4', weight:1.8});
-  } else {
-    rect.setStyle({dashArray:null});
+// ---- Проверка пересечения точек с полигонами других ботов ----
+function intersectsOtherBots(latlng,botIndex){
+  for(let i=0;i<bots.length;i++){
+    if(i===botIndex) continue;
+    if(!bots[i].polygon) continue;
+    if(bots[i].polygon.getBounds().contains(latlng)) return true;
   }
-
-  if(!data || !data.owner){
-    // свободный или нет владельца — ставим нейтральный стиль
-    rect.setStyle({color:'#8888aa', fillOpacity: mapInfo.exists?0.12:0});
-    // если chunk существует и разрешён спавн — лёгкая подсветка
-    if(mapInfo.exists && mapInfo.spawnAllowed){ rect.setStyle({weight:2.6, color:'#7aaef7', fillOpacity:0.14}); }
-    return;
-  }
-  // есть владелец
-  if(data.owner==='player'){
-    rect.setStyle({color:'#17a34a', fillOpacity:0.7, fillColor:'#17a34a'});
-  } else {
-    // владелец бот — красим в цвет бота (теперь чётко видно окрась)
-    const bot = state.bots[data.owner];
-    const c = bot?.color || '#f97316';
-    rect.setStyle({color:c, fillColor:c, fillOpacity:0.7, weight:2.5});
-  }
-}
-
-/* ---------- редактор карты (логика) ---------- */
-function toggleChunkExists(key){
-  if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:false};
-  else state.mapChunks[key].exists = !state.mapChunks[key].exists;
-  // очистить метки и владения для несуществующих чанков
-  if(!state.mapChunks[key].exists){
-    if(state.markers.chunkRects[key]){ map.removeLayer(state.markers.chunkRects[key]); delete state.markers.chunkRects[key]; }
-  }
-  saveMap(); renderMapChunks(); updateMapCounts();
-}
-function toggleSpawnFlag(key){
-  if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:true};
-  else state.mapChunks[key].spawnAllowed = !state.mapChunks[key].spawnAllowed;
-  saveMap(); updateMapCounts(); renderMapChunks();
-}
-
-function renderMapChunks(){
-  // удалить все ненужные прямоугольники, и рисуем по mapChunks
-  for(const k in state.markers.chunkRects){ map.removeLayer(state.markers.chunkRects[k]); }
-  state.markers.chunkRects = {};
-  for(const k in state.mapChunks){ if(state.mapChunks[k].exists) renderChunk(k); }
-  // также отрисовать те, которые есть у state.chunks (владение), даже если не в mapChunks — это безопасно
-  for(const k in state.chunks){ renderChunk(k); }
-}
-
-function updateMapCounts(){
-  const total = Object.values(state.mapChunks).filter(i=>i.exists).length;
-  const spawnAllowed = Object.values(state.mapChunks).filter(i=>i.exists && i.spawnAllowed).length;
-  document.getElementById('mapChunksCount').textContent = total;
-  document.getElementById('spawnAllowedCount').textContent = spawnAllowed;
-}
-
-/* ---------- selection ---------- */
-function selectChunk(key){
-  state.selectedChunk=key; renderChunk(key,true);
-  const info=document.getElementById('selectedInfo'); info.style.display='block';
-  const chunk=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
-  const owner=chunk.owner;
-  const ownerText=owner==='player'?'<span class="owner-player">Игрок</span>':owner?`<span class="owner-bot">Бот ${owner}</span>`:'<span class="owner-none">Свободен</span>';
-  const mapInfo = state.mapChunks[key] || {exists:false, spawnAllowed:false};
-  const bounds=chunkBoundsFromKey(key);
-  const centerLat=(bounds[0][0]+bounds[1][0])/2, centerLng=(bounds[0][1]+bounds[1][1])/2;
-  info.innerHTML=`<div class="small">Чанк: <strong>${key}</strong></div>
-    <div class="small">Центр: ${centerLat.toFixed(2)}, ${centerLng.toFixed(2)}</div>
-    <div style="margin-top:8px">Владелец: ${ownerText}</div>
-    <div style="margin-top:6px">Структуры: ${chunk.structures.length||0} ${chunk.structures.map(s=>`<span class="structure">${s}</span>`).join('')}</div>
-    <div style="margin-top:8px">Карта: ${mapInfo.exists? 'Есть':'Нет'}; Спавн ботов: ${mapInfo.spawnAllowed? 'Да':'Нет'}</div>
-    <div style="margin-top:8px">
-      ${owner===null?`<button id="buyBtn">Купить (${CHUNK_BASE_COST})</button>`:''}
-      ${owner&&owner!=='player'?`<button id="attackBtn">Атаковать (${PLAYER_ATTACK_COST})</button>`:''}
-      ${owner==='player'?`<button id="buildBtn">Построить (${STRUCTURE_COST})</button>`:''}
-    </div>
-  `;
-
-  if(owner===null) document.getElementById('buyBtn').onclick=()=>{ 
-    if(state.money<CHUNK_BASE_COST){alert('Недостаточно денег'); return;}
-    state.money-=CHUNK_BASE_COST;
-    state.chunks[key]={owner:'player',structures:[],powerModifier:0};
-    saveState(); refreshUI(); updateChunkStyle(key); log(`Игрок купил чанк ${key} за ${CHUNK_BASE_COST}`);
-  };
-
-  if(owner&&owner!=='player') document.getElementById('attackBtn').onclick=()=>{ 
-    if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег'); return;}
-    state.money-=PLAYER_ATTACK_COST;
-    const success=resolveBattle('player',owner,key);
-    if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);} 
-    else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`);
-    saveState(); refreshUI(); updateChunkStyle(key);
-  };
-
-  if(owner==='player') document.getElementById('buildBtn').onclick=()=>{ 
-    if(state.money<STRUCTURE_COST){alert('Недостаточно денег'); return;}
-    state.money-=STRUCTURE_COST;
-    state.chunks[key].structures.push('House Sticker');
-    const pos=randomPointInChunk(key);
-    const marker=L.marker(pos).addTo(map).bindPopup('Стикер дома');
-    if(!state.markers.structures[key]) state.markers.structures[key]=[];
-    state.markers.structures[key].push(marker);
-    log(`Игрок построил House Sticker в чанке ${key}`);
-    saveState(); refreshUI(); updateChunkStyle(key);
-  };
-}
-
-/* ---------- battle ---------- */
-function resolveBattle(attacker,defenderBotId,chunkKey){
-  let aPower=70+Math.random()*50+(state.chunks[chunkKey]?.structures.length||0)*5;
-  aPower=Math.min(aPower,150)*(0.7+Math.random()*0.6);
-  const bot=state.bots[defenderBotId];
-  let dPower=(bot?.power||60)+(state.chunks[chunkKey]?.powerModifier||0);
-  dPower=Math.min(dPower,150)*(0.7+Math.random()*0.6);
-  return aPower>=dPower;
-}
-
-/* ---------- bots (улучшенная логика захвата и окраски) ---------- */
-function spawnBotsRandomly(count){
-  for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0);
-  state.bots={};
-  // determine spawn candidates
-  const allowed = state.allowedSpawnSet? Array.from(state.allowedSpawnSet) : Object.keys(state.mapChunks).filter(k=>state.mapChunks[k]?.exists && state.mapChunks[k]?.spawnAllowed);
-  const fallback = Object.keys(state.mapChunks).filter(k=>state.mapChunks[k]?.exists);
-  const finalPool = (allowed && allowed.length>0)? allowed : (fallback.length>0? fallback : null);
-
-  for(let i=0;i<count;i++){
-    const id=`B${i+1}`;
-    let key;
-    if(finalPool){ key = finalPool[Math.floor(Math.random()*finalPool.length)]; }
-    else { // если карта пуста — можно спавнить по всему миру (как раньше)
-      const lat = Math.random()*180-90, lng=Math.random()*360-180; key=chunkKeyFromLatLng(lat,lng);
-      // ensure the chunk exists in mapChunks so it can be rendered
-      if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:false};
-    }
-    const bot={id,name:`Bot-${i+1}`,color:getColorForIndex(i),chunkKey:key,power:40+Math.floor(Math.random()*90)};
-    state.bots[id]=bot;
-    state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
-    // бот занимает чанк только если этот чанк разрешён для спавна или карта не была окончательно запечатана
-    const canOccupy = state.allowedSpawnSet? state.allowedSpawnSet.has(key) : (state.mapChunks[key]?.exists ?? true);
-    if(!state.chunks[key].owner && canOccupy && Math.random()<0.95){
-      claimChunkByBot(key, id);
-    }
-    renderChunk(key,true);
-  }
-  saveState(); renderAllBots(); log(`Распределено ${count} ботов по миру`);
-}
-function getColorForIndex(i){const p=['#fb923c','#f97316','#fb7185','#f472b6','#60a5fa','#7c3aed','#34d399','#f59e0b','#ef4444','#10b981']; return p[i%p.length];}
-function renderAllBots(){for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0); state.markers.botMarkers={}; for(const id in state.bots) placeBotMarker(id);}
-function placeBotMarker(botId){const bot=state.bots[botId]; const pos=randomPointInChunk(bot.chunkKey); state.markers.botMarkers[botId]=L.circleMarker(pos,{radius:8,color:bot.color,fillColor:bot.color,fillOpacity:0.9}).addTo(map).bindPopup(`<b>${bot.name}</b><br>Power: ${bot.power}<br>Chunk: ${bot.chunkKey}`);}
-
-function botMoveStep(botId){
-  const bot=state.bots[botId]; if(!bot) return; 
-  const adj=getAdjacentKeys(bot.chunkKey);
-  if(!adj.length) return;
-  // вероятность перемещения зависит от агрессивности бота
-  if(Math.random()<0.35) return; 
-  // выбираем цель: сначала чанки игрока (если рядом), затем нейтральные, затем слабые боты
-  const adjPlayer = adj.filter(k=>state.chunks[k]?.owner==='player');
-  const adjNeutral = adj.filter(k=>!state.chunks[k]?.owner);
-  const adjBots = adj.filter(k=>state.chunks[k]?.owner && state.chunks[k].owner !== 'player');
-  let next = null;
-  if(adjPlayer.length>0 && Math.random()<0.8) next = adjPlayer[Math.floor(Math.random()*adjPlayer.length)];
-  else if(adjNeutral.length>0 && Math.random()<0.6) next = adjNeutral[Math.floor(Math.random()*adjNeutral.length)];
-  else if(adjBots.length>0) next = adjBots[Math.floor(Math.random()*adjBots.length)];
-  if(!next) next = adj[Math.floor(Math.random()*adj.length)];
-
-  const prevChunk = bot.chunkKey;
-  bot.chunkKey=next; 
-  state.chunks[next]=state.chunks[next]||{owner:null,structures:[],powerModifier:0};
-
-  // если цель принадлежит игроку — попытка атаки
-  if(state.chunks[next].owner === 'player'){
-    const success = resolveBotAttack(botId, next);
-    if(success){ claimChunkByBot(next, botId); }
-    else { log(`${bot.name} пытался атаковать игрока в чанке ${next}, но неудачно`); }
-  } else if(!state.chunks[next].owner){
-    // нейтральный — шанс захватить
-    if(Math.random()<0.6){ claimChunkByBot(next, botId); }
-  } else if(state.chunks[next].owner && state.chunks[next].owner !== botId){
-    // атакуем другого бота — сравниваем силы
-    const other = state.chunks[next].owner;
-    const myPower = bot.power*(0.8+Math.random()*0.6);
-    const theirPower = (state.bots[other]?.power||40)*(0.8+Math.random()*0.6);
-    if(myPower > theirPower){ claimChunkByBot(next, botId); log(`${bot.name} отбил чанк у ${other}`); }
-    else if(Math.random()<0.15) log(`${bot.name} атаковал ${other} но проиграл`);
-  }
-
-  saveState(); placeBotMarker(botId); updateChunkStyle(prevChunk); updateChunkStyle(next);
-}
-
-function resolveBotAttack(botId, targetChunk){
-  const bot = state.bots[botId];
-  const aPower = bot.power*(0.9+Math.random()*0.6);
-  const dPower = 70 + (state.chunks[targetChunk]?.structures.length||0)*8 + (state.chunks[targetChunk]?.powerModifier||0);
-  if(aPower > dPower){ return true; }
+  // также проверка пересечения с игроком (если нужно — можно предотвратить)
+  if(polygon && polygon.getBounds().contains(latlng)) return true;
   return false;
 }
 
-function botTryAttack(botId){
-  const bot=state.bots[botId]; if(!bot) return; 
-  // отдельно проходимся по соседям — если есть чанки игрока, пробуем атаковать с некоторой вероятностью
-  const targets = getAdjacentKeys(bot.chunkKey).filter(k=>state.chunks[k]?.owner==='player');
-  if(!targets.length) return;
-  const target = targets[Math.floor(Math.random()*targets.length)];
-  const success = resolveBotAttack(botId, target);
-  if(success){ claimChunkByBot(target, botId); }
-  else if(Math.random()<0.3) log(`${bot.name} атаковал ${target}, но не смог захватить`);
-  saveState();
+// ---- Полигон игрока и ручки ----
+function initHandles(){
+  handles.forEach(h=>map.removeLayer(h)); handles=[];
+  if(!polygon) return;
+  const latlngs=polygon.getLatLngs()[0];
+  latlngs.forEach((pt,i)=>{
+    const handle=L.circleMarker(pt,{radius:6,color:'red',weight:2,fillColor:'yellow',fillOpacity:1}).addTo(map);
+    handle.on('mousedown',ev=>{
+      map.dragging.disable();
+      const start=ev.latlng; map.on('mousemove',onDrag); map.once('mouseup',onUp);
+      function onDrag(e){ handle.setLatLng(e.latlng); latlngs[i]=e.latlng; polygon.setLatLngs([latlngs]); }
+      function onUp(e){
+        map.off('mousemove',onDrag);
+        const dist=distance(start,e.latlng);
+        const cost=Math.floor(dist/100)*COST_PER_100M;
+        if(coins>=cost){ updateCoins(-cost);
+          const next=(i+1)%latlngs.length;
+          if(distance(latlngs[i],latlngs[next])>=ADD_VERTEX_THRESHOLD){
+            const midLat=(latlngs[i].lat+latlngs[next].lat)/2;
+            const midLng=(latlngs[i].lng+latlngs[next].lng)/2;
+            latlngs.splice(next,0,[midLat,midLng]); polygon.setLatLngs([latlngs]);
+          }
+          initHandles();
+        } else { latlngs[i]=start; polygon.setLatLngs([latlngs]); handle.setLatLng(start); alert("Не хватает монет!"); }
+        map.dragging.enable();
+      }
+    });
+    handles.push(handle);
+  });
 }
 
-function getAdjacentKeys(key){const [x,y]=key.split('_').map(Number); return [`${x+1}_${y}`,`${x-1}_${y}`,`${x}_${y+1}`,`${x}_${y-1}`];}
+// ---- Создание квадрата 1км×1км ----
+map.on('click',e=>{
+  if(!polygon && coins>=50){
+    const sw=offsetLatLng(e.latlng,0,0);
+    const se=offsetLatLng(e.latlng,1000,0);
+    const ne=offsetLatLng(e.latlng,1000,1000);
+    const nw=offsetLatLng(e.latlng,0,1000);
+    polygon=L.polygon([sw,se,ne,nw],{color:'blue'}).addTo(map);
+    updateCoins(-50); initHandles();
+    return;
+  }
+  if(!polygon || !buildMode) return;
+  if(!polygon.getBounds().contains(e.latlng)){ alert("Можно строить только внутри!"); return; }
 
-/* ---------- taxes & income ---------- */
-function processTaxes(){
-  taxTimer--; 
-  if(taxTimer<=0){ 
-    taxTimer=TAX_INTERVAL;
-    let tax=0, income=0;
-    for(const k in state.chunks){
-      if(state.chunks[k].owner==='player'){
-        const houses=state.chunks[k].structures.length;
-        tax+=TAX_PER_CHUNK+houses*TAX_PER_HOUSE; 
-        income+=houses*HOUSE_INCOME;
+  if(buildMode==='house' && coins>=HOUSE_COST){
+    const pop=Math.floor(Math.random()*4)+3;
+    updatePopulation(pop);
+    updateCoins(-HOUSE_COST);
+    houses.push(L.marker(e.latlng,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map));
+  }
+  if(buildMode==='shop' && coins>=SHOP_COST){
+    updateCoins(-SHOP_COST);
+    shops.push({marker:L.marker(e.latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map), workers:SHOP_WORKERS});
+  }
+  if(buildMode==='factory' && coins>=FACTORY_COST){
+    updateCoins(-FACTORY_COST);
+    factories.push({marker:L.marker(e.latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map), workers:FACTORY_WORKERS});
+  }
+
+  buildMode=null; document.getElementById('buildHouseBtn').textContent="Дом (100)";
+  updateStatus();
+});
+
+// ---- Кнопки ----
+document.getElementById('buildHouseBtn').onclick=()=>{ buildMode='house'; document.getElementById('buildHouseBtn').textContent="Выберите точку для дома"; }
+document.getElementById('buildShopBtn').onclick=()=>{ buildMode='shop'; }
+document.getElementById('buildFactoryBtn').onclick=()=>{ buildMode='factory'; }
+
+// ---- Сохранение (включая ботов) ----
+document.getElementById('saveBtn').onclick=()=>{
+  const data={coins,population,
+    houses: houses.map(h=>h.getLatLng()),
+    shops: shops.map(s=>({latlng:s.marker.getLatLng(), workers:s.workers})),
+    factories: factories.map(f=>({latlng:f.marker.getLatLng(), workers:f.workers})),
+    polygon: polygon ? polygon.getLatLngs()[0] : null,
+    bots: bots.map(b=>{
+      return {
+        name: b.name,
+        color: b.color,
+        coins: b.coins,
+        population: b.population,
+        polygon: b.polygon ? b.polygon.getLatLngs()[0] : null,
+        houses: b.houses.map(m=>m.getLatLng ? m.getLatLng() : m),
+        shops: b.shops.map(s=>({latlng: s.marker.getLatLng ? s.marker.getLatLng() : s.latlng, workers: s.workers})),
+        factories: b.factories.map(f=>({latlng: f.marker.getLatLng ? f.marker.getLatLng() : f.latlng, workers: f.workers}))
+      };
+    })
+  };
+  localStorage.setItem('gameSave', JSON.stringify(data));
+  alert("Игра сохранена!");
+};
+
+// ---- Сброс сохранения ----
+document.getElementById('resetBtn').onclick=()=>{
+  if(confirm("Вы уверены, что хотите сбросить сохранение? Всё будет потеряно!")){
+    localStorage.removeItem('gameSave');
+    location.reload();
+  }
+};
+
+// ---- Доход игрока ----
+setInterval(()=>{
+  let income=0, availableWorkers=population;
+  shops.forEach(s=>{ if(availableWorkers>=s.workers){ income+=SHOP_INCOME; availableWorkers-=s.workers; } });
+  factories.forEach(f=>{ if(availableWorkers>=f.workers){ income+=FACTORY_INCOME; availableWorkers-=f.workers; } });
+  updateCoins(income);
+  updateStatus();
+},1000);
+
+// ---- Статус рабочих ----
+function updateStatus(){
+  let neededWorkers=0;
+  shops.forEach(s=>neededWorkers+=s.workers);
+  factories.forEach(f=>neededWorkers+=f.workers);
+  const freeWorkers=population-neededWorkers;
+  if(freeWorkers<0){ statusDisplay.textContent=`💼 Безработица: 0, Нужны рабочие для всех зданий!`; }
+  else{ statusDisplay.textContent=`💼 Рабочих: ${population}, свободных: ${freeWorkers}`; }
+}
+
+// ---- Поведение ботов: строительство домов каждые 2 сек ----
+function botBuildCycle(){
+  bots.forEach((bot, idx)=>{
+    if(!bot.polygon) return;
+    const bounds = bot.polygon.getBounds();
+    // случайное место внутри полигона
+    const lat = bounds.getSouthWest().lat + Math.random()*(bounds.getNorthEast().lat-bounds.getSouthWest().lat);
+    const lng = bounds.getSouthWest().lng + Math.random()*(bounds.getNorthEast().lng-bounds.getSouthWest().lng);
+    const latlng = {lat, lng};
+    // если место не пересекается с другими ботами и у бота есть деньги
+    if(bot.coins>=HOUSE_COST && !intersectsOtherBots(latlng, idx)){
+      // 70% шанс построить дом, 20% — магазин (если достаточно монет), 10% — фабрику (если много монет)
+      const r=Math.random();
+      if(r<0.7){
+        const m = L.marker([lat,lng],{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map);
+        bot.houses.push(m);
+        bot.markers.houses.push(m);
+        bot.coins -= HOUSE_COST;
+        bot.population += Math.floor(Math.random()*4)+3;
+      } else if(r<0.9 && bot.coins>=SHOP_COST){
+        const m = L.marker([lat,lng],{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map);
+        bot.shops.push({marker:m, workers:SHOP_WORKERS});
+        bot.markers.shops.push(m);
+        bot.coins -= SHOP_COST;
+      } else if(bot.coins>=FACTORY_COST && r>=0.9){
+        const m = L.marker([lat,lng],{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map);
+        bot.factories.push({marker:m, workers:FACTORY_WORKERS});
+        bot.markers.factories.push(m);
+        bot.coins -= FACTORY_COST;
       }
     }
-    state.money+=income-tax;
-    document.getElementById('taxAmount').textContent = `${income-tax} (Доход:${income} Налог:${tax})`;
-    saveState(); refreshUI();
-  }
-  document.getElementById('taxTimer').textContent=taxTimer;
+  });
 }
 
-/* ---------- UI ---------- */
-function refreshUI(){document.getElementById('money').textContent=state.money; document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;}
+// ---- Боты расширяют территорию через Convex Hull каждые 5 сек ----
+function botExpandCycle(){
+  bots.forEach((bot,idx)=>{
+    if(!bot.polygon) return;
+    if(bot.coins<50) return;
+    // берём текущие точки полигона
+    const latlngs = bot.polygon.getLatLngs()[0].map(p=>[p.lat,p.lng]);
+    const base = latlngs[Math.floor(Math.random()*latlngs.length)];
+    const dx = (Math.random()*150+50)*(Math.random()<0.5?-1:1);
+    const dy = (Math.random()*150+50)*(Math.random()<0.5?-1:1);
+    // приблизительная конвертация метров в градусы (не точная, но достаточная)
+    const newPoint = [base[0]+dy*0.00001, base[1]+dx*0.00001];
+    latlngs.push(newPoint);
+    const hull = convexHull(latlngs);
+    bot.polygon.setLatLngs(hull.map(p=>({lat:p[0],lng:p[1]})));
+    // перемещаем лейбл
+    if(bot.label){ bot.label.setLatLng(bot.polygon.getBounds().getCenter()); }
+    bot.coins -= 50;
+  });
+}
 
-/* ---------- events & editor controls ---------- */
-map.on('click', e=>{
-  const key = chunkKeyFromLatLng(e.latlng.lat,e.latlng.lng);
-  if(state.editor.enabled){
-    // в редакторе — если shift — переключаем spawn, иначе существование
-    if(e.originalEvent && e.originalEvent.shiftKey) toggleSpawnFlag(key);
-    else toggleChunkExists(key);
+// ---- Боты получают доход каждую секунду ----
+function botIncomeCycle(){
+  bots.forEach(bot=>{
+    if(!bot.polygon) return;
+    let income=0, availableWorkers=bot.population;
+    bot.shops.forEach(s=>{ if(availableWorkers>=s.workers){ income+=SHOP_INCOME; availableWorkers-=s.workers; } });
+    bot.factories.forEach(f=>{ if(availableWorkers>=f.workers){ income+=FACTORY_INCOME; availableWorkers-=f.workers; } });
+    bot.coins += income;
+  });
+}
+
+// ---- Сохранение/загрузка ботов: функции для восстановления маркеров ----
+function restoreBotFromData(bData, botObj){
+  botObj.coins = bData.coins ?? 5000;
+  botObj.population = bData.population ?? 50;
+  botObj.color = bData.color ?? botObj.color;
+
+  // remove existing markers/polygon if any
+  if(botObj.polygon){ map.removeLayer(botObj.polygon); botObj.polygon=null; }
+  botObj.markers.houses.forEach(m=>map.removeLayer(m)); botObj.markers.houses=[];
+  botObj.markers.shops.forEach(m=>map.removeLayer(m)); botObj.markers.shops=[];
+  botObj.markers.factories.forEach(m=>map.removeLayer(m)); botObj.markers.factories=[];
+
+  if(bData.polygon){
+    botObj.polygon = L.polygon(bData.polygon,{color:botObj.color, weight:2, opacity:0.9}).addTo(map);
+    botObj.label = L.marker(botObj.polygon.getBounds().getCenter(), { interactive:false, icon:L.divIcon({className:'botLabel', html:botObj.name, iconSize:[60,20]}) }).addTo(map);
   } else {
-    selectChunk(key);
+    // если нет полигона — создаём рандомно небольшой
+    initBotsRandomly();
+  }
+  // здания
+  botObj.houses = []; botObj.shops = []; botObj.factories = [];
+  (bData.houses||[]).forEach(h=>{
+    const m = L.marker(h,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map);
+    botObj.houses.push(m); botObj.markers.houses.push(m);
+  });
+  (bData.shops||[]).forEach(s=>{
+    const latlng = s.latlng || s;
+    const m = L.marker(latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map);
+    botObj.shops.push({marker:m, workers: s.workers ?? SHOP_WORKERS}); botObj.markers.shops.push(m);
+  });
+  (bData.factories||[]).forEach(f=>{
+    const latlng = f.latlng || f;
+    const m = L.marker(latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map);
+    botObj.factories.push({marker:m, workers: f.workers ?? FACTORY_WORKERS}); botObj.markers.factories.push(m);
+  });
+}
+
+// ---- Загрузка сохранения ----
+window.addEventListener('load',()=>{
+  const saved=localStorage.getItem('gameSave');
+  if(saved){
+    const data=JSON.parse(saved);
+    coins=data.coins ?? coins; population=data.population ?? population;
+    coinDisplay.textContent=coins; popDisplay.textContent=population;
+
+    if(data.polygon){ polygon=L.polygon(data.polygon,{color:'blue'}).addTo(map); initHandles(); }
+    data.houses?.forEach(h=>houses.push(L.marker(h,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map)));
+    data.shops?.forEach(s=>shops.push({marker:L.marker(s.latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map), workers:s.workers}));
+    data.factories?.forEach(f=>factories.push({marker:L.marker(f.latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map), workers:f.workers}));
+
+    // restore bots if present
+    if(data.bots && Array.isArray(data.bots) && data.bots.length===bots.length){
+      data.bots.forEach((bData, i)=> restoreBotFromData(bData, bots[i]));
+    } else {
+      // иначе рандомная инициализация
+      initBotsRandomly();
+    }
+    updateStatus();
+  } else {
+    // если нет сохранения — инициализируем ботов рандомно
+    initBotsRandomly();
   }
 });
 
-document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
-document.getElementById('resetBtn').onclick=resetAll;
-
-// редактор
-const toggleEditBtn = document.getElementById('toggleEditBtn');
-const toggleModeBtn = document.getElementById('toggleModeBtn');
-const finishEditBtn = document.getElementById('finishEditBtn');
-const clearMapBtn = document.getElementById('clearMapBtn');
-const exportMapBtn = document.getElementById('exportMapBtn');
-const importMapBtn = document.getElementById('importMapBtn');
-const mapExportArea = document.getElementById('mapExportArea');
-
-toggleEditBtn.onclick = ()=>{
-  state.editor.enabled = !state.editor.enabled;
-  toggleEditBtn.textContent = state.editor.enabled? 'Выключить редактор' : 'Включить редактор';
-  // при включении редактора отображаем все чанки
-  renderMapChunks();
-};
-
-toggleModeBtn.onclick = ()=>{
-  state.editor.mode = state.editor.mode==='toggleExists' ? 'toggleSpawn' : 'toggleExists';
-  toggleModeBtn.textContent = state.editor.mode==='toggleExists' ? 'Режим: переключать Чанк' : 'Режим: переключать Spawn';
-};
-
-finishEditBtn.onclick = ()=>{
-  // формируем allowedSpawnSet и запечатываем карту — далее боты спавнятся и захватывают ТОЛЬКО в этих чанках
-  const allowed = new Set();
-  for(const k in state.mapChunks){ if(state.mapChunks[k].exists && state.mapChunks[k].spawnAllowed) allowed.add(k); }
-  state.allowedSpawnSet = allowed.size>0? allowed : null;
-  // обновляем видимость прямоугольников
-  renderMapChunks();
-  // уведомление
-  alert('Редактирование завершено. Боты теперь будут спавниться и захватывать только отмеченные чанки (если они есть).');
-};
-
-clearMapBtn.onclick = ()=>{
-  if(!confirm('Очистить всю карту? Это удалит все отмеченные чанки.')) return;
-  state.mapChunks = {};
-  state.allowedSpawnSet = null;
-  saveMap(); renderMapChunks(); updateMapCounts();
-};
-
-exportMapBtn.onclick = async ()=>{
-  const json = JSON.stringify(state.mapChunks);
-  mapExportArea.value = json;
-  try{ await navigator.clipboard.writeText(json); alert('JSON карты скопирован в буфер обмена'); } catch(e){ alert('Нельзя записать в буфер. JSON показан в поле ниже — скопируйте вручную.'); }
-};
-
-importMapBtn.onclick = ()=>{
-  const s = prompt('Вставьте JSON карты:');
-  if(!s) return;
-  try{
-    const m = JSON.parse(s);
-    state.mapChunks = m || {};
-    state.allowedSpawnSet = null;
-    saveMap(); renderMapChunks(); updateMapCounts();
-    alert('Карта импортирована');
-  } catch(e){ alert('Ошибка парсинга JSON'); }
-};
-
-/* ---------- loops ---------- */
-setInterval(()=>{for(const id in state.bots) botMoveStep(id);},BOT_MOVE_INTERVAL);
-setInterval(()=>{for(const id in state.bots) botTryAttack(id);},BOT_ATTACK_INTERVAL);
-setInterval(processTaxes,1000);
-
-/* ---------- init ---------- */
-if(!loadState()){ // при первом запуске — создаём маленький пример карты и спавним ботов
-  // создадим сетку вокруг 0_0
-  const baseKeys = ['0_0','1_0','0_1','-1_0','0_-1','1_1','-1_-1'];
-  baseKeys.forEach(k=>state.mapChunks[k]={exists:true, spawnAllowed:false});
-  saveMap();
-  spawnBotsRandomly(BOT_COUNT);
-}
-renderMapChunks(); renderAllBots(); refreshUI();
+// ---- Перезапуск циклов ботов ----
+setInterval(botBuildCycle, 2000);
+setInterval(botExpandCycle, 5000);
+setInterval(botIncomeCycle, 1000);
 
 </script>
 </body>
