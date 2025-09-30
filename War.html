@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Война чанков — карта с ботами</title>
+<title>Война чанков — карта с ботами (Редактор карт)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
 html,body,#map { height: 100%; margin: 0; padding: 0; }
-#map { position: absolute; left: 0; right: 320px; top: 0; bottom: 0; }
-#sidebar { position: absolute; right: 0; top: 0; width: 320px; bottom: 0; background: #1e293b; color: #e6eef8; padding: 12px; box-sizing: border-box; font-family: Arial, sans-serif; overflow-y: auto; }
+#map { position: absolute; left: 0; right: 420px; top: 0; bottom: 0; }
+#sidebar { position: absolute; right: 0; top: 0; width: 420px; bottom: 0; background: #0b1220; color: #e6eef8; padding: 12px; box-sizing: border-box; font-family: Arial, sans-serif; overflow-y: auto; }
 h2 { margin: 6px 0 12px; font-size: 18px; }
 .info-row { margin: 8px 0; }
 button { background: #2563eb; color: white; border: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
@@ -20,44 +20,17 @@ button { background: #2563eb; color: white; border: none; padding: 8px 10px; bor
 .small { font-size: 13px; color:#a8b3c7; }
 .structure { font-size:12px; padding:4px 6px; background:#1f2937; border-radius:4px; display:inline-block; margin-right:6px; }
 .money { font-weight:700; font-size:18px; }
-.log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:220px; overflow:auto; }
-
-#taxPanel {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  background: #111827;
-  color: #f3f4f6;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-family: Arial, sans-serif;
-  z-index: 1000;
-  pointer-events: auto;
-}
-
-#newsPopup {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #1e293b;
-  color: #f3f4f6;
-  padding: 12px 16px;
-  border-radius: 8px;
-  font-family: Arial, sans-serif;
-  font-size: 14px;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
-  z-index: 1100;
-  display: none;
-}
-#newsPopup button { margin-left:12px; background:#ef4444; }
+.log { font-family: monospace; font-size:12px; background:#020617; padding:6px; border-radius:6px; color:#9fb6d6; max-height:160px; overflow:auto; }
+.editor-hint { font-size:13px; color:#cbd5e1; margin-top:8px; }
+#editorControls { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap }
+.map-stats { margin-top:6px; font-size:13px; color:#9fb6d6 }
+#mapExportArea { width:100%; height:80px; background:#041021; color:#cfe7ff; padding:6px; border-radius:6px; box-sizing:border-box; margin-top:8px; font-family:monospace; font-size:12px; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="sidebar">
-<h2>Война чанков — прототип</h2>
+<h2>Война чанков — Редактор карт</h2>
 <div class="info-row">Деньги: <span id="money" class="money">—</span></div>
 <div class="info-row small">Чанк = квадрат <strong id="chunkSizeDisplay"></strong>×<strong id="chunkSizeDisplay2"></strong> км</div>
 <div class="info-row">
@@ -68,23 +41,35 @@ button { background: #2563eb; color: white; border: none; padding: 8px 10px; bor
 <div id="selectedTitle" class="small">Кликните по карте, чтобы выбрать чанк</div>
 <div id="selectedInfo" class="chunk-info" style="display:none"></div>
 <hr style="border-color:#16304a">
+<div id="editorBlock">
+  <div class="info-row"><strong>Редактор карты:</strong></div>
+  <div id="editorControls">
+    <button id="toggleEditBtn">Включить редактор</button>
+    <button id="toggleModeBtn" class="btn-ghost">Режим: переключать Чанк</button>
+    <button id="finishEditBtn">Завершить редактирование (блокировать спавн)</button>
+    <button id="clearMapBtn" class="btn-ghost">Очистить карту</button>
+  </div>
+  <div class="editor-hint">В редакторе: клик по карте — добавляет/удаляет чанк; при удержании Shift клик — переключает флаг <em>spawnAllowed</em> (разрешён спавн ботов в этом чанке).</div>
+  <div class="map-stats">Всего чанков на карте: <span id="mapChunksCount">0</span>. Разрешено для спавна: <span id="spawnAllowedCount">0</span>.</div>
+  <div style="margin-top:8px">
+    <button id="exportMapBtn">Экспортировать карту (в буфер)</button>
+    <button id="importMapBtn" class="btn-ghost">Импортировать карту (JSON)</button>
+  </div>
+  <textarea id="mapExportArea" placeholder="JSON карты появится здесь при экспорте" readonly></textarea>
+</div>
+<hr style="border-color:#16304a">
 <div class="info-row"><strong>Мои чанки:</strong> <span id="myChunksCount">0</span></div>
 <div class="info-row"><strong>Лог:</strong></div>
 <div id="log" class="log"></div>
 <div id="leaderboardContainer"></div>
 <div style="margin-top:12px" class="small">
-Прототип использует Leaflet + localStorage. Можно изменять параметры прямо в коде.
+Прототип использует Leaflet + localStorage. Редактор сохраняет карту отдельно и позволяет экспортировать/импортировать JSON.
 </div>
 </div>
 
 <div id="taxPanel">
   Налог/Доход: <span id="taxAmount">0</span><br>
   Через: <span id="taxTimer">30</span> сек
-</div>
-
-<div id="newsPopup">
-  <span id="newsText"></span>
-  <button id="closeNewsBtn">Закрыть</button>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -115,21 +100,30 @@ document.getElementById('chunkSizeDisplay2').textContent = CHUNK_SIZE_KM;
 
 const state = {
   money: INITIAL_MONEY,
-  chunks: {},
+  chunks: {},          // текущее владение чанками (owner: 'player' | botId | null, structures[]...)
   bots: {},
   markers: { chunkRects: {}, botMarkers: {}, structures: {} },
   selectedChunk: null,
+  // карта как набор «существующих» чанков — редактируемая и экспортируемая
+  mapChunks: {},       // { chunkKey: { exists: true, spawnAllowed: true } }
+  // после завершения редактирования — список разрешённых для спавна чанков
+  allowedSpawnSet: null,
+  editor: { enabled:false, mode:'toggleExists' } // mode: toggleExists | toggleSpawn
 };
 
 /* ---------- localStorage ---------- */
-function saveState(){ localStorage.setItem('war_chunks_v3', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); }
+function saveState(){ localStorage.setItem('war_chunks_v3', JSON.stringify({money:state.money,chunks:state.chunks,bots:state.bots})); saveMap(); }
 function loadState(){
   const raw = localStorage.getItem('war_chunks_v3');
   if(!raw) return false;
-  try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; return true;} 
-  catch(e){console.error(e); return false;}
+  try{ const p=JSON.parse(raw); state.money=p.money??INITIAL_MONEY; state.chunks=p.chunks??{}; state.bots=p.bots??{}; } 
+  catch(e){console.error(e);} 
+  loadMap(); return true;
 }
-function resetAll(){ localStorage.removeItem('war_chunks_v3'); location.reload(); }
+
+function saveMap(){ localStorage.setItem('war_map_v1', JSON.stringify(state.mapChunks)); updateMapCounts(); }
+function loadMap(){ const raw = localStorage.getItem('war_map_v1'); if(!raw) return false; try{ state.mapChunks=JSON.parse(raw)||{}; updateMapCounts(); return true;}catch(e){console.error(e); return false;} }
+function resetAll(){ localStorage.removeItem('war_chunks_v3'); localStorage.removeItem('war_map_v1'); location.reload(); }
 
 /* ---------- гео утилиты ---------- */
 function latLngToMeters(lat,lng){const R=6378137; return [R*lng*Math.PI/180, R*Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))];}
@@ -151,27 +145,117 @@ function randomPointInChunk(key){
 /* ---------- logging ---------- */
 function log(msg){const el=document.getElementById('log'); el.innerHTML=`[${new Date().toLocaleTimeString()}] ${msg}<br>`+el.innerHTML;}
 
-/* ---------- chunks ---------- */
+/* ---------- chunks & editor rendering ---------- */
 function renderChunk(key, forceVisible=false){
+  // рисуем только если чанк присутствует на карте (mapChunks[key].exists) или если нужно форсить видимость
   if(state.markers.chunkRects[key]) return;
+  const exists = state.mapChunks[key]?.exists || forceVisible || !!state.chunks[key];
+  if(!exists) return;
   const bounds = chunkBoundsFromKey(key);
   const rect = L.rectangle(bounds,{
-    color:'#ff0000', weight:2.5, fill:true, fillOpacity: (state.chunks[key]?.owner || forceVisible) ? 0.7 : 0.1, interactive:true
+    color:'#ff0000', weight:2.5, fill:true, fillOpacity: (state.chunks[key]?.owner || forceVisible) ? 0.7 : 0.12, interactive:true
   }).addTo(map);
-  rect.on('click',()=>selectChunk(key));
+  rect.on('click',(e)=>{
+    // в редакторе клики по чанку переключают его существование/флаг спавна
+    const keyLocal = key;
+    if(state.editor.enabled){
+      // если зажата shift — переключаем spawnAllowed
+      if(e.originalEvent && e.originalEvent.shiftKey){
+        toggleSpawnFlag(keyLocal);
+      } else {
+        toggleChunkExists(keyLocal);
+      }
+      return;
+    }
+    selectChunk(keyLocal);
+  });
   state.markers.chunkRects[key] = rect;
   updateChunkStyle(key);
+}
+
+function colorizeChunkWithBot(key, botId){
+  const rect = state.markers.chunkRects[key];
+  const bot = state.bots[botId];
+  if(!rect || !bot) return;
+  const c = bot.color || '#f97316';
+  // мгновенно установить цвет
+  rect.setStyle({color: c, fillColor: c, fillOpacity: 0.75, weight:2.8});
+  // добавить эффект "вспышки" границы
+  rect.bringToFront && rect.bringToFront();
+  setTimeout(()=>{ // затем слегка уменьшить насыщенность
+    rect.setStyle({fillOpacity:0.7, weight:2.5});
+  },700);
+}
+
+function claimChunkByBot(key, botId){
+  if(!state.chunks[key]) state.chunks[key] = { owner: null, structures: [], powerModifier: 0 };
+  state.chunks[key].owner = botId;
+  saveState();
+  // отрисуем и покрасим
+  renderChunk(key,true);
+  colorizeChunkWithBot(key, botId);
+  log(`${state.bots[botId]?.name || botId} захватил чанк ${key}`);
 }
 
 function updateChunkStyle(key){
   const rect = state.markers.chunkRects[key]; if(!rect) return;
   const data = state.chunks[key];
-  if(!data.owner) rect.setStyle({color:'#ff0000', fillOpacity:0.1});
-  else if(data.owner==='player') rect.setStyle({color:'#17a34a', fillOpacity:0.7});
-  else { 
-    // Скрываем прямоугольники ботов, но оставляем механики захвата
-    rect.setStyle({color:'#00000000', fillOpacity:0});
+  const mapInfo = state.mapChunks[key] || {exists:false, spawnAllowed:false};
+  // draw editor hint outline for non-spawnable map chunks
+  if(mapInfo.exists && state.editor.enabled){
+    rect.setStyle({dashArray:'4', weight:1.8});
+  } else {
+    rect.setStyle({dashArray:null});
   }
+
+  if(!data || !data.owner){
+    // свободный или нет владельца — ставим нейтральный стиль
+    rect.setStyle({color:'#8888aa', fillOpacity: mapInfo.exists?0.12:0});
+    // если chunk существует и разрешён спавн — лёгкая подсветка
+    if(mapInfo.exists && mapInfo.spawnAllowed){ rect.setStyle({weight:2.6, color:'#7aaef7', fillOpacity:0.14}); }
+    return;
+  }
+  // есть владелец
+  if(data.owner==='player'){
+    rect.setStyle({color:'#17a34a', fillOpacity:0.7, fillColor:'#17a34a'});
+  } else {
+    // владелец бот — красим в цвет бота (теперь чётко видно окрась)
+    const bot = state.bots[data.owner];
+    const c = bot?.color || '#f97316';
+    rect.setStyle({color:c, fillColor:c, fillOpacity:0.7, weight:2.5});
+  }
+}
+
+/* ---------- редактор карты (логика) ---------- */
+function toggleChunkExists(key){
+  if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:false};
+  else state.mapChunks[key].exists = !state.mapChunks[key].exists;
+  // очистить метки и владения для несуществующих чанков
+  if(!state.mapChunks[key].exists){
+    if(state.markers.chunkRects[key]){ map.removeLayer(state.markers.chunkRects[key]); delete state.markers.chunkRects[key]; }
+  }
+  saveMap(); renderMapChunks(); updateMapCounts();
+}
+function toggleSpawnFlag(key){
+  if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:true};
+  else state.mapChunks[key].spawnAllowed = !state.mapChunks[key].spawnAllowed;
+  saveMap(); updateMapCounts(); renderMapChunks();
+}
+
+function renderMapChunks(){
+  // удалить все ненужные прямоугольники, и рисуем по mapChunks
+  for(const k in state.markers.chunkRects){ map.removeLayer(state.markers.chunkRects[k]); }
+  state.markers.chunkRects = {};
+  for(const k in state.mapChunks){ if(state.mapChunks[k].exists) renderChunk(k); }
+  // также отрисовать те, которые есть у state.chunks (владение), даже если не в mapChunks — это безопасно
+  for(const k in state.chunks){ renderChunk(k); }
+}
+
+function updateMapCounts(){
+  const total = Object.values(state.mapChunks).filter(i=>i.exists).length;
+  const spawnAllowed = Object.values(state.mapChunks).filter(i=>i.exists && i.spawnAllowed).length;
+  document.getElementById('mapChunksCount').textContent = total;
+  document.getElementById('spawnAllowedCount').textContent = spawnAllowed;
 }
 
 /* ---------- selection ---------- */
@@ -181,12 +265,14 @@ function selectChunk(key){
   const chunk=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
   const owner=chunk.owner;
   const ownerText=owner==='player'?'<span class="owner-player">Игрок</span>':owner?`<span class="owner-bot">Бот ${owner}</span>`:'<span class="owner-none">Свободен</span>';
+  const mapInfo = state.mapChunks[key] || {exists:false, spawnAllowed:false};
   const bounds=chunkBoundsFromKey(key);
   const centerLat=(bounds[0][0]+bounds[1][0])/2, centerLng=(bounds[0][1]+bounds[1][1])/2;
   info.innerHTML=`<div class="small">Чанк: <strong>${key}</strong></div>
     <div class="small">Центр: ${centerLat.toFixed(2)}, ${centerLng.toFixed(2)}</div>
     <div style="margin-top:8px">Владелец: ${ownerText}</div>
     <div style="margin-top:6px">Структуры: ${chunk.structures.length||0} ${chunk.structures.map(s=>`<span class="structure">${s}</span>`).join('')}</div>
+    <div style="margin-top:8px">Карта: ${mapInfo.exists? 'Есть':'Нет'}; Спавн ботов: ${mapInfo.spawnAllowed? 'Да':'Нет'}</div>
     <div style="margin-top:8px">
       ${owner===null?`<button id="buyBtn">Купить (${CHUNK_BASE_COST})</button>`:''}
       ${owner&&owner!=='player'?`<button id="attackBtn">Атаковать (${PLAYER_ATTACK_COST})</button>`:''}
@@ -205,7 +291,7 @@ function selectChunk(key){
     if(state.money<PLAYER_ATTACK_COST){alert('Недостаточно денег'); return;}
     state.money-=PLAYER_ATTACK_COST;
     const success=resolveBattle('player',owner,key);
-    if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);}
+    if(success){state.chunks[key].owner='player'; log(`Игрок победил бота ${owner} и захватил чанк ${key}`);} 
     else log(`Атака провалена. Бот ${owner} удерживает чанк ${key}`);
     saveState(); refreshUI(); updateChunkStyle(key);
   };
@@ -233,17 +319,32 @@ function resolveBattle(attacker,defenderBotId,chunkKey){
   return aPower>=dPower;
 }
 
-/* ---------- bots ---------- */
+/* ---------- bots (улучшенная логика захвата и окраски) ---------- */
 function spawnBotsRandomly(count){
   for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0);
   state.bots={};
+  // determine spawn candidates
+  const allowed = state.allowedSpawnSet? Array.from(state.allowedSpawnSet) : Object.keys(state.mapChunks).filter(k=>state.mapChunks[k]?.exists && state.mapChunks[k]?.spawnAllowed);
+  const fallback = Object.keys(state.mapChunks).filter(k=>state.mapChunks[k]?.exists);
+  const finalPool = (allowed && allowed.length>0)? allowed : (fallback.length>0? fallback : null);
+
   for(let i=0;i<count;i++){
-    const id=`B${i+1}`, lat=Math.random()*180-90, lng=Math.random()*360-180;
-    const key=chunkKeyFromLatLng(lat,lng);
+    const id=`B${i+1}`;
+    let key;
+    if(finalPool){ key = finalPool[Math.floor(Math.random()*finalPool.length)]; }
+    else { // если карта пуста — можно спавнить по всему миру (как раньше)
+      const lat = Math.random()*180-90, lng=Math.random()*360-180; key=chunkKeyFromLatLng(lat,lng);
+      // ensure the chunk exists in mapChunks so it can be rendered
+      if(!state.mapChunks[key]) state.mapChunks[key]={exists:true, spawnAllowed:false};
+    }
     const bot={id,name:`Bot-${i+1}`,color:getColorForIndex(i),chunkKey:key,power:40+Math.floor(Math.random()*90)};
     state.bots[id]=bot;
     state.chunks[key]=state.chunks[key]||{owner:null,structures:[],powerModifier:0};
-    if(!state.chunks[key].owner) state.chunks[key].owner=id;
+    // бот занимает чанк только если этот чанк разрешён для спавна или карта не была окончательно запечатана
+    const canOccupy = state.allowedSpawnSet? state.allowedSpawnSet.has(key) : (state.mapChunks[key]?.exists ?? true);
+    if(!state.chunks[key].owner && canOccupy && Math.random()<0.95){
+      claimChunkByBot(key, id);
+    }
     renderChunk(key,true);
   }
   saveState(); renderAllBots(); log(`Распределено ${count} ботов по миру`);
@@ -251,8 +352,67 @@ function spawnBotsRandomly(count){
 function getColorForIndex(i){const p=['#fb923c','#f97316','#fb7185','#f472b6','#60a5fa','#7c3aed','#34d399','#f59e0b','#ef4444','#10b981']; return p[i%p.length];}
 function renderAllBots(){for(const id in state.markers.botMarkers) map.removeLayer(state.markers.botMarkers[id]||0); state.markers.botMarkers={}; for(const id in state.bots) placeBotMarker(id);}
 function placeBotMarker(botId){const bot=state.bots[botId]; const pos=randomPointInChunk(bot.chunkKey); state.markers.botMarkers[botId]=L.circleMarker(pos,{radius:8,color:bot.color,fillColor:bot.color,fillOpacity:0.9}).addTo(map).bindPopup(`<b>${bot.name}</b><br>Power: ${bot.power}<br>Chunk: ${bot.chunkKey}`);}
-function botMoveStep(botId){const bot=state.bots[botId]; if(!bot) return; const adj=getAdjacentKeys(bot.chunkKey); if(!adj.length||Math.random()<0.35) return; const next=adj[Math.floor(Math.random()*adj.length)]; bot.chunkKey=next; state.chunks[next]=state.chunks[next]||{owner:null,structures:[],powerModifier:0}; if(!state.chunks[next].owner && Math.random()<0.7){state.chunks[next].owner=botId; log(`${bot.name} захватил чанк ${next}`); updateChunkStyle(next);} saveState(); placeBotMarker(botId);}
-function botTryAttack(botId){const bot=state.bots[botId]; if(!bot) return; const targets=getAdjacentKeys(bot.chunkKey).filter(k=>state.chunks[k]?.owner==='player'); if(!targets.length) return; const target=targets[Math.floor(Math.random()*targets.length)]; const aPower=bot.power*(0.8+Math.random()*0.6); const dPower=60+(state.chunks[target]?.powerModifier||0)+(state.chunks[target]?.structures.length||0)*8; if(aPower>dPower){state.chunks[target].owner=botId; log(`${bot.name} победил и захватил чанк ${target}`); updateChunkStyle(target);} else if(Math.random()<0.25) log(`${bot.name} атаковал ${target}, но не смог захватить`); saveState();}
+
+function botMoveStep(botId){
+  const bot=state.bots[botId]; if(!bot) return; 
+  const adj=getAdjacentKeys(bot.chunkKey);
+  if(!adj.length) return;
+  // вероятность перемещения зависит от агрессивности бота
+  if(Math.random()<0.35) return; 
+  // выбираем цель: сначала чанки игрока (если рядом), затем нейтральные, затем слабые боты
+  const adjPlayer = adj.filter(k=>state.chunks[k]?.owner==='player');
+  const adjNeutral = adj.filter(k=>!state.chunks[k]?.owner);
+  const adjBots = adj.filter(k=>state.chunks[k]?.owner && state.chunks[k].owner !== 'player');
+  let next = null;
+  if(adjPlayer.length>0 && Math.random()<0.8) next = adjPlayer[Math.floor(Math.random()*adjPlayer.length)];
+  else if(adjNeutral.length>0 && Math.random()<0.6) next = adjNeutral[Math.floor(Math.random()*adjNeutral.length)];
+  else if(adjBots.length>0) next = adjBots[Math.floor(Math.random()*adjBots.length)];
+  if(!next) next = adj[Math.floor(Math.random()*adj.length)];
+
+  const prevChunk = bot.chunkKey;
+  bot.chunkKey=next; 
+  state.chunks[next]=state.chunks[next]||{owner:null,structures:[],powerModifier:0};
+
+  // если цель принадлежит игроку — попытка атаки
+  if(state.chunks[next].owner === 'player'){
+    const success = resolveBotAttack(botId, next);
+    if(success){ claimChunkByBot(next, botId); }
+    else { log(`${bot.name} пытался атаковать игрока в чанке ${next}, но неудачно`); }
+  } else if(!state.chunks[next].owner){
+    // нейтральный — шанс захватить
+    if(Math.random()<0.6){ claimChunkByBot(next, botId); }
+  } else if(state.chunks[next].owner && state.chunks[next].owner !== botId){
+    // атакуем другого бота — сравниваем силы
+    const other = state.chunks[next].owner;
+    const myPower = bot.power*(0.8+Math.random()*0.6);
+    const theirPower = (state.bots[other]?.power||40)*(0.8+Math.random()*0.6);
+    if(myPower > theirPower){ claimChunkByBot(next, botId); log(`${bot.name} отбил чанк у ${other}`); }
+    else if(Math.random()<0.15) log(`${bot.name} атаковал ${other} но проиграл`);
+  }
+
+  saveState(); placeBotMarker(botId); updateChunkStyle(prevChunk); updateChunkStyle(next);
+}
+
+function resolveBotAttack(botId, targetChunk){
+  const bot = state.bots[botId];
+  const aPower = bot.power*(0.9+Math.random()*0.6);
+  const dPower = 70 + (state.chunks[targetChunk]?.structures.length||0)*8 + (state.chunks[targetChunk]?.powerModifier||0);
+  if(aPower > dPower){ return true; }
+  return false;
+}
+
+function botTryAttack(botId){
+  const bot=state.bots[botId]; if(!bot) return; 
+  // отдельно проходимся по соседям — если есть чанки игрока, пробуем атаковать с некоторой вероятностью
+  const targets = getAdjacentKeys(bot.chunkKey).filter(k=>state.chunks[k]?.owner==='player');
+  if(!targets.length) return;
+  const target = targets[Math.floor(Math.random()*targets.length)];
+  const success = resolveBotAttack(botId, target);
+  if(success){ claimChunkByBot(target, botId); }
+  else if(Math.random()<0.3) log(`${bot.name} атаковал ${target}, но не смог захватить`);
+  saveState();
+}
+
 function getAdjacentKeys(key){const [x,y]=key.split('_').map(Number); return [`${x+1}_${y}`,`${x-1}_${y}`,`${x}_${y+1}`,`${x}_${y-1}`];}
 
 /* ---------- taxes & income ---------- */
@@ -278,52 +438,93 @@ function processTaxes(){
 /* ---------- UI ---------- */
 function refreshUI(){document.getElementById('money').textContent=state.money; document.getElementById('myChunksCount').textContent=Object.values(state.chunks).filter(c=>c.owner==='player').length;}
 
-/* ---------- news ---------- */
-const newsList=[
-  "В стране бота произошел пожар на складах.",
-  "Бот создает новые оборонительные постройки.",
-  "Игрок захватил ключевой чанк.",
-  "Новый бот подключился к войне.",
-  "Произошла массовая миграция ботов.",
-  "Бот потерял контроль над стратегическим чанком.",
-  "На рынке появились новые ресурсы.",
-  "В стране игрока обнаружен саботаж.",
-  "Боты усиливают свои позиции на востоке.",
-  "Игрок строит новую базу.",
-  "Боты начали укрепление границ.",
-  "Произошел сбой в системе коммуникаций ботов.",
-  "Игрок внедрил разведку в тыл врага.",
-  "Боты захватывают нейтральные территории.",
-  "В стране игрока произошло землетрясение.",
-  "Новые торговые маршруты открыты.",
-  "Бот теряет союзников в регионе.",
-  "Игрок нанимает наемников.",
-  "Происходит политический переворот у бота.",
-  "Игрок увеличивает производство ресурсов."
-];
-function showRandomNews(){
-  const n=document.getElementById('newsPopup');
-  document.getElementById('newsText').textContent=newsList[Math.floor(Math.random()*newsList.length)];
-  n.style.display='block';
-  setTimeout(()=>{n.style.display='none';},10000+Math.random()*5000);
-}
-document.getElementById('closeNewsBtn').onclick=()=>document.getElementById('newsPopup').style.display='none';
+/* ---------- events & editor controls ---------- */
+map.on('click', e=>{
+  const key = chunkKeyFromLatLng(e.latlng.lat,e.latlng.lng);
+  if(state.editor.enabled){
+    // в редакторе — если shift — переключаем spawn, иначе существование
+    if(e.originalEvent && e.originalEvent.shiftKey) toggleSpawnFlag(key);
+    else toggleChunkExists(key);
+  } else {
+    selectChunk(key);
+  }
+});
+
+document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
+document.getElementById('resetBtn').onclick=resetAll;
+
+// редактор
+const toggleEditBtn = document.getElementById('toggleEditBtn');
+const toggleModeBtn = document.getElementById('toggleModeBtn');
+const finishEditBtn = document.getElementById('finishEditBtn');
+const clearMapBtn = document.getElementById('clearMapBtn');
+const exportMapBtn = document.getElementById('exportMapBtn');
+const importMapBtn = document.getElementById('importMapBtn');
+const mapExportArea = document.getElementById('mapExportArea');
+
+toggleEditBtn.onclick = ()=>{
+  state.editor.enabled = !state.editor.enabled;
+  toggleEditBtn.textContent = state.editor.enabled? 'Выключить редактор' : 'Включить редактор';
+  // при включении редактора отображаем все чанки
+  renderMapChunks();
+};
+
+toggleModeBtn.onclick = ()=>{
+  state.editor.mode = state.editor.mode==='toggleExists' ? 'toggleSpawn' : 'toggleExists';
+  toggleModeBtn.textContent = state.editor.mode==='toggleExists' ? 'Режим: переключать Чанк' : 'Режим: переключать Spawn';
+};
+
+finishEditBtn.onclick = ()=>{
+  // формируем allowedSpawnSet и запечатываем карту — далее боты спавнятся и захватывают ТОЛЬКО в этих чанках
+  const allowed = new Set();
+  for(const k in state.mapChunks){ if(state.mapChunks[k].exists && state.mapChunks[k].spawnAllowed) allowed.add(k); }
+  state.allowedSpawnSet = allowed.size>0? allowed : null;
+  // обновляем видимость прямоугольников
+  renderMapChunks();
+  // уведомление
+  alert('Редактирование завершено. Боты теперь будут спавниться и захватывать только отмеченные чанки (если они есть).');
+};
+
+clearMapBtn.onclick = ()=>{
+  if(!confirm('Очистить всю карту? Это удалит все отмеченные чанки.')) return;
+  state.mapChunks = {};
+  state.allowedSpawnSet = null;
+  saveMap(); renderMapChunks(); updateMapCounts();
+};
+
+exportMapBtn.onclick = async ()=>{
+  const json = JSON.stringify(state.mapChunks);
+  mapExportArea.value = json;
+  try{ await navigator.clipboard.writeText(json); alert('JSON карты скопирован в буфер обмена'); } catch(e){ alert('Нельзя записать в буфер. JSON показан в поле ниже — скопируйте вручную.'); }
+};
+
+importMapBtn.onclick = ()=>{
+  const s = prompt('Вставьте JSON карты:');
+  if(!s) return;
+  try{
+    const m = JSON.parse(s);
+    state.mapChunks = m || {};
+    state.allowedSpawnSet = null;
+    saveMap(); renderMapChunks(); updateMapCounts();
+    alert('Карта импортирована');
+  } catch(e){ alert('Ошибка парсинга JSON'); }
+};
 
 /* ---------- loops ---------- */
 setInterval(()=>{for(const id in state.bots) botMoveStep(id);},BOT_MOVE_INTERVAL);
 setInterval(()=>{for(const id in state.bots) botTryAttack(id);},BOT_ATTACK_INTERVAL);
 setInterval(processTaxes,1000);
-setInterval(showRandomNews,12000+Math.random()*5000);
-
-/* ---------- events ---------- */
-map.on('click', e=>{selectChunk(chunkKeyFromLatLng(e.latlng.lat,e.latlng.lng));});
-document.getElementById('spawnBotsBtn').onclick=()=>spawnBotsRandomly(BOT_COUNT);
-document.getElementById('resetBtn').onclick=resetAll;
 
 /* ---------- init ---------- */
-if(!loadState()){ spawnBotsRandomly(BOT_COUNT); }
-for(const k in state.chunks) renderChunk(k);
-renderAllBots(); refreshUI();
+if(!loadState()){ // при первом запуске — создаём маленький пример карты и спавним ботов
+  // создадим сетку вокруг 0_0
+  const baseKeys = ['0_0','1_0','0_1','-1_0','0_-1','1_1','-1_-1'];
+  baseKeys.forEach(k=>state.mapChunks[k]={exists:true, spawnAllowed:false});
+  saveMap();
+  spawnBotsRandomly(BOT_COUNT);
+}
+renderMapChunks(); renderAllBots(); refreshUI();
+
 </script>
 </body>
 </html>
