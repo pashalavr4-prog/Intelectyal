@@ -1,388 +1,210 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Карта с рабочими, ботами и сохранением</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Реальная карта мира — Вороного на суше</title>
 <style>
-html, body { margin:0; padding:0; height:100%; background:#111; font-family:sans-serif; }
-#map { width:100%; height:calc(100% - 70px); }
-#ui { height:70px; display:flex; align-items:center; justify-content:space-around; padding:5px 10px; background:#222; color:#fff; box-shadow:0 -2px 5px rgba(0,0,0,0.5);}
-button { padding:6px 12px; cursor:pointer; border:none; border-radius:5px; background:#00aaff; color:#fff; font-weight:bold; transition:0.2s; font-size:14px;}
-button:hover { background:#0088cc; }
-.house, .shop, .factory { font-size:18px; }
-.info { display:flex; flex-direction:column; align-items:center; font-size:14px; }
-.status { position:absolute; bottom:75px; left:50%; transform:translateX(-50%); background:#333; padding:5px 10px; border-radius:5px; color:#fff; font-size:14px; }
-.botLabel { font-size:12px; color:#fff; padding:2px 6px; background:rgba(0,0,0,0.5); border-radius:4px; }
+  html,body { margin:0; height:100%; background:#0b1d2a; font-family:Arial, sans-serif; }
+  #map { width:100vw; height:100vh; cursor:grab; user-select:none; }
+  #map:active { cursor:grabbing; }
+  svg { display:block; width:100%; height:100%; }
+  .vor-cell { stroke: rgba(8,40,16,0.9); stroke-width:0.4; }
+  .land-outline { fill:none; stroke: rgba(255,255,255,0.12); stroke-width:0.8; pointer-events:none; }
+  .controls { position: absolute; left:10px; top:10px; color:#fff; background: rgba(0,0,0,0.35); padding:8px; border-radius:6px; font-size:13px; }
+  .controls label { display:inline-block; margin-right:8px; }
 </style>
 </head>
 <body>
 
-<div id="map"></div>
-<div id="ui">
-  <div class="info">💰 <span id="coins">5000</span></div>
-  <div class="info">👥 <span id="population">0</span></div>
-  <button id="buildHouseBtn">Дом (100)</button>
-  <button id="buildShopBtn">Магазин (350)</button>
-  <button id="buildFactoryBtn">Фабрика (850)</button>
-  <button id="saveBtn">💾 Сохранить</button>
-  <button id="resetBtn">🗑️ Сбросить</button>
+<div class="controls">
+  <label>Ячеек (CELL_COUNT): <input id="cellCountInput" type="number" value="1500" min="100" max="8000" step="100" style="width:80px"></label>
+  <button id="regenerateBtn">Перегенерировать</button>
+  <span id="info" style="margin-left:10px"></span>
 </div>
-<div class="status" id="workStatus">💼 Рабочих нет / Все здания не работают</div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<div id="map">
+  <svg id="svg" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet"
+       xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <clipPath id="landClip" clipPathUnits="userSpaceOnUse"></clipPath>
+      <!-- optional gradient or styles can be added here -->
+    </defs>
+
+    <!-- Group that will contain Voronoi cells; clipped to land -->
+    <g id="voronoiGroup" clip-path="url(#landClip)"></g>
+
+    <!-- Land outlines drawn on top -->
+    <g id="landOutlineGroup" pointer-events="none"></g>
+  </svg>
+</div>
+
+<!-- Libraries -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+
 <script>
-// ---- Настройки ----
-const COST_PER_100M=50, ADD_VERTEX_THRESHOLD=100;
-const HOUSE_COST=100, HOUSE_INCOME=50;
-const SHOP_COST=350, SHOP_INCOME=100, SHOP_WORKERS=3;
-const FACTORY_COST=850, FACTORY_INCOME=250, FACTORY_WORKERS=25;
+(async function() {
+  // Параметры и ссылки
+  const TOPOJSON_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json'; // источник: world-atlas (Natural Earth). См. ссылки в ответе.
+  const svg = d3.select('#svg');
+  const width = +svg.attr('viewBox').split(' ')[2];
+  const height = +svg.attr('viewBox').split(' ')[3];
 
-let coins=5000, population=0;
-let polygon=null, handles=[], houses=[], shops=[], factories=[];
-let buildMode=null;
+  const vorGroup = svg.select('#voronoiGroup');
+  const landClip = svg.select('#landClip');
+  const landOutlineGroup = svg.select('#landOutlineGroup');
 
-// ---- Карта ----
-const map=L.map('map').setView([20,0],13);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19,opacity:0.9}).addTo(map);
+  const infoEl = document.getElementById('info');
+  const cellCountInput = document.getElementById('cellCountInput');
+  const regenBtn = document.getElementById('regenerateBtn');
 
-const coinDisplay=document.getElementById('coins');
-const popDisplay=document.getElementById('population');
-const statusDisplay=document.getElementById('workStatus');
-const updateCoins=amt=>{ coins+=amt; coinDisplay.textContent=coins; };
-const updatePopulation=amt=>{ population+=amt; popDisplay.textContent=population; updateStatus(); };
+  // Загрузка TopoJSON и преобразование в GeoJSON (land)
+  const topo = await fetch(TOPOJSON_URL).then(r => r.json());
+  const landGeo = topojson.feature(topo, topo.objects.land); // один FeatureCollection с полигонами суши
 
-// ---- Помощники ----
-const distance=(a,b)=>map.distance(a,b);
-function offsetLatLng(latlng, dx_m, dy_m){
-  const R=6378137;
-  const dLat=dy_m/R*(180/Math.PI);
-  const dLng=dx_m/(R*Math.cos(latlng.lat*Math.PI/180))*(180/Math.PI);
-  return [latlng.lat+dLat, latlng.lng+dLng];
-}
+  // Проекция и path для отображения суши
+  // Используем Меркатор; scale/translate подогнаны под viewBox
+  const projection = d3.geoMercator()
+                       .scale(190)         // можно подправить при необходимости
+                       .translate([width / 2, height / 1.9]);
+  const geoPath = d3.geoPath().projection(projection);
 
-// ---- Convex Hull (для расширения территорий) ----
-function convexHull(points){
-  if(points.length<=2) return points.slice();
-  points = points.slice().map(p=>[p[0],p[1]]);
-  points.sort((a,b)=>a[0]-b[0] || a[1]-b[1]);
-  const cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
-  const lower=[], upper=[];
-  for(let p of points){
-    while(lower.length>=2 && cross(lower[lower.length-2],lower[lower.length-1],p)<=0) lower.pop();
-    lower.push(p);
-  }
-  for(let i=points.length-1;i>=0;i--){
-    let p=points[i];
-    while(upper.length>=2 && cross(upper[upper.length-2],upper[upper.length-1],p)<=0) upper.pop();
-    upper.push(p);
-  }
-  upper.pop(); lower.pop();
-  return lower.concat(upper);
-}
+  // Отрисовать контуры суши в clipPath и как outline
+  function renderLandShapes() {
+    landClip.selectAll('path').remove();
+    landOutlineGroup.selectAll('path').remove();
 
-// ---- Боты ----
-let botColors=['purple','orange','green','yellow','cyan','pink','lime','red','blue','magenta','brown','teal','olive','navy','maroon','aqua','silver','gold','violet','indigo','coral','salmon','plum','tan','khaki'];
-let bots=[];
-const BOT_COUNT=25;
-
-// создаёт пустых ботов (будут инициализированы ниже или при загрузке)
-for(let i=0;i<BOT_COUNT;i++){
-  bots.push({ name:'Бот'+(i+1), color:botColors[i%botColors.length], polygon:null,
-              houses:[], shops:[], factories:[], population:50, coins:5000, markers: {houses:[],shops:[],factories:[]} });
-}
-
-// ---- Инициализация ботов (если нет сохранения) ----
-function initBotsRandomly(){
-  bots.forEach((bot,idx)=>{
-    // ищем случайную точку (простая генерация около центра)
-    let lat,lng,tries=0;
-    do{
-      lat = 20 + (Math.random()-0.5)*0.6; // чуть рандома вокруг
-      lng = 0 + (Math.random()-0.5)*0.6;
-      tries++;
-      if(tries>200) break;
-    }while(lat<0);
-    const sw=offsetLatLng({lat,lng},0,0);
-    const se=offsetLatLng({lat,lng},400,0);
-    const ne=offsetLatLng({lat,lng},400,400);
-    const nw=offsetLatLng({lat,lng},0,400);
-    const latlngs = [ {lat:sw[0], lng:sw[1]}, {lat:se[0], lng:se[1]}, {lat:ne[0], lng:ne[1]}, {lat:nw[0], lng:nw[1]} ];
-    bot.polygon = L.polygon(latlngs,{color:bot.color, weight:2, opacity:0.9}).addTo(map);
-    // label for bot
-    const center = bot.polygon.getBounds().getCenter();
-    bot.label = L.marker(center, { interactive:false, icon:L.divIcon({className:'botLabel', html:bot.name, iconSize:[60,20]}) }).addTo(map);
-  });
-}
-
-// ---- Проверка пересечения точек с полигонами других ботов ----
-function intersectsOtherBots(latlng,botIndex){
-  for(let i=0;i<bots.length;i++){
-    if(i===botIndex) continue;
-    if(!bots[i].polygon) continue;
-    if(bots[i].polygon.getBounds().contains(latlng)) return true;
-  }
-  // также проверка пересечения с игроком (если нужно — можно предотвратить)
-  if(polygon && polygon.getBounds().contains(latlng)) return true;
-  return false;
-}
-
-// ---- Полигон игрока и ручки ----
-function initHandles(){
-  handles.forEach(h=>map.removeLayer(h)); handles=[];
-  if(!polygon) return;
-  const latlngs=polygon.getLatLngs()[0];
-  latlngs.forEach((pt,i)=>{
-    const handle=L.circleMarker(pt,{radius:6,color:'red',weight:2,fillColor:'yellow',fillOpacity:1}).addTo(map);
-    handle.on('mousedown',ev=>{
-      map.dragging.disable();
-      const start=ev.latlng; map.on('mousemove',onDrag); map.once('mouseup',onUp);
-      function onDrag(e){ handle.setLatLng(e.latlng); latlngs[i]=e.latlng; polygon.setLatLngs([latlngs]); }
-      function onUp(e){
-        map.off('mousemove',onDrag);
-        const dist=distance(start,e.latlng);
-        const cost=Math.floor(dist/100)*COST_PER_100M;
-        if(coins>=cost){ updateCoins(-cost);
-          const next=(i+1)%latlngs.length;
-          if(distance(latlngs[i],latlngs[next])>=ADD_VERTEX_THRESHOLD){
-            const midLat=(latlngs[i].lat+latlngs[next].lat)/2;
-            const midLng=(latlngs[i].lng+latlngs[next].lng)/2;
-            latlngs.splice(next,0,[midLat,midLng]); polygon.setLatLngs([latlngs]);
-          }
-          initHandles();
-        } else { latlngs[i]=start; polygon.setLatLngs([latlngs]); handle.setLatLng(start); alert("Не хватает монет!"); }
-        map.dragging.enable();
-      }
+    // landGeo может быть FeatureCollection с несколькими Features (MultiPolygon/Polygon)
+    landGeo.features.forEach((feat) => {
+      const d = geoPath(feat);
+      landClip.append('path').attr('d', d);
+      landOutlineGroup.append('path').attr('d', d).attr('class', 'land-outline');
     });
-    handles.push(handle);
-  });
-}
-
-// ---- Создание квадрата 1км×1км ----
-map.on('click',e=>{
-  if(!polygon && coins>=50){
-    const sw=offsetLatLng(e.latlng,0,0);
-    const se=offsetLatLng(e.latlng,1000,0);
-    const ne=offsetLatLng(e.latlng,1000,1000);
-    const nw=offsetLatLng(e.latlng,0,1000);
-    polygon=L.polygon([sw,se,ne,nw],{color:'blue'}).addTo(map);
-    updateCoins(-50); initHandles();
-    return;
-  }
-  if(!polygon || !buildMode) return;
-  if(!polygon.getBounds().contains(e.latlng)){ alert("Можно строить только внутри!"); return; }
-
-  if(buildMode==='house' && coins>=HOUSE_COST){
-    const pop=Math.floor(Math.random()*4)+3;
-    updatePopulation(pop);
-    updateCoins(-HOUSE_COST);
-    houses.push(L.marker(e.latlng,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map));
-  }
-  if(buildMode==='shop' && coins>=SHOP_COST){
-    updateCoins(-SHOP_COST);
-    shops.push({marker:L.marker(e.latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map), workers:SHOP_WORKERS});
-  }
-  if(buildMode==='factory' && coins>=FACTORY_COST){
-    updateCoins(-FACTORY_COST);
-    factories.push({marker:L.marker(e.latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map), workers:FACTORY_WORKERS});
   }
 
-  buildMode=null; document.getElementById('buildHouseBtn').textContent="Дом (100)";
-  updateStatus();
-});
+  // Генерация случайных точек строго внутри суши (в географических координатах)
+  // Возвращает массив точек [lon, lat] длины <= count
+  function generatePointsInsideLand(count, maxAttempts = 300000) {
+    const bounds = d3.geoBounds(landGeo); // [[minLon,minLat],[maxLon,maxLat]]
+    const minLon = bounds[0][0], minLat = bounds[0][1];
+    const maxLon = bounds[1][0], maxLat = bounds[1][1];
+    const points = [];
+    let attempts = 0;
 
-// ---- Кнопки ----
-document.getElementById('buildHouseBtn').onclick=()=>{ buildMode='house'; document.getElementById('buildHouseBtn').textContent="Выберите точку для дома"; }
-document.getElementById('buildShopBtn').onclick=()=>{ buildMode='shop'; }
-document.getElementById('buildFactoryBtn').onclick=()=>{ buildMode='factory'; }
-
-// ---- Сохранение (включая ботов) ----
-document.getElementById('saveBtn').onclick=()=>{
-  const data={coins,population,
-    houses: houses.map(h=>h.getLatLng()),
-    shops: shops.map(s=>({latlng:s.marker.getLatLng(), workers:s.workers})),
-    factories: factories.map(f=>({latlng:f.marker.getLatLng(), workers:f.workers})),
-    polygon: polygon ? polygon.getLatLngs()[0] : null,
-    bots: bots.map(b=>{
-      return {
-        name: b.name,
-        color: b.color,
-        coins: b.coins,
-        population: b.population,
-        polygon: b.polygon ? b.polygon.getLatLngs()[0] : null,
-        houses: b.houses.map(m=>m.getLatLng ? m.getLatLng() : m),
-        shops: b.shops.map(s=>({latlng: s.marker.getLatLng ? s.marker.getLatLng() : s.latlng, workers: s.workers})),
-        factories: b.factories.map(f=>({latlng: f.marker.getLatLng ? f.marker.getLatLng() : f.latlng, workers: f.workers}))
-      };
-    })
-  };
-  localStorage.setItem('gameSave', JSON.stringify(data));
-  alert("Игра сохранена!");
-};
-
-// ---- Сброс сохранения ----
-document.getElementById('resetBtn').onclick=()=>{
-  if(confirm("Вы уверены, что хотите сбросить сохранение? Всё будет потеряно!")){
-    localStorage.removeItem('gameSave');
-    location.reload();
-  }
-};
-
-// ---- Доход игрока ----
-setInterval(()=>{
-  let income=0, availableWorkers=population;
-  shops.forEach(s=>{ if(availableWorkers>=s.workers){ income+=SHOP_INCOME; availableWorkers-=s.workers; } });
-  factories.forEach(f=>{ if(availableWorkers>=f.workers){ income+=FACTORY_INCOME; availableWorkers-=f.workers; } });
-  updateCoins(income);
-  updateStatus();
-},1000);
-
-// ---- Статус рабочих ----
-function updateStatus(){
-  let neededWorkers=0;
-  shops.forEach(s=>neededWorkers+=s.workers);
-  factories.forEach(f=>neededWorkers+=f.workers);
-  const freeWorkers=population-neededWorkers;
-  if(freeWorkers<0){ statusDisplay.textContent=`💼 Безработица: 0, Нужны рабочие для всех зданий!`; }
-  else{ statusDisplay.textContent=`💼 Рабочих: ${population}, свободных: ${freeWorkers}`; }
-}
-
-// ---- Поведение ботов: строительство домов каждые 2 сек ----
-function botBuildCycle(){
-  bots.forEach((bot, idx)=>{
-    if(!bot.polygon) return;
-    const bounds = bot.polygon.getBounds();
-    // случайное место внутри полигона
-    const lat = bounds.getSouthWest().lat + Math.random()*(bounds.getNorthEast().lat-bounds.getSouthWest().lat);
-    const lng = bounds.getSouthWest().lng + Math.random()*(bounds.getNorthEast().lng-bounds.getSouthWest().lng);
-    const latlng = {lat, lng};
-    // если место не пересекается с другими ботами и у бота есть деньги
-    if(bot.coins>=HOUSE_COST && !intersectsOtherBots(latlng, idx)){
-      // 70% шанс построить дом, 20% — магазин (если достаточно монет), 10% — фабрику (если много монет)
-      const r=Math.random();
-      if(r<0.7){
-        const m = L.marker([lat,lng],{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map);
-        bot.houses.push(m);
-        bot.markers.houses.push(m);
-        bot.coins -= HOUSE_COST;
-        bot.population += Math.floor(Math.random()*4)+3;
-      } else if(r<0.9 && bot.coins>=SHOP_COST){
-        const m = L.marker([lat,lng],{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map);
-        bot.shops.push({marker:m, workers:SHOP_WORKERS});
-        bot.markers.shops.push(m);
-        bot.coins -= SHOP_COST;
-      } else if(bot.coins>=FACTORY_COST && r>=0.9){
-        const m = L.marker([lat,lng],{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map);
-        bot.factories.push({marker:m, workers:FACTORY_WORKERS});
-        bot.markers.factories.push(m);
-        bot.coins -= FACTORY_COST;
+    while (points.length < count && attempts < maxAttempts) {
+      attempts++;
+      const lon = minLon + Math.random() * (maxLon - minLon);
+      const lat = minLat + Math.random() * (maxLat - minLat);
+      // d3.geoContains проверяет, лежит ли точка внутри FeatureCollection/Feature
+      if (d3.geoContains(landGeo, [lon, lat])) {
+        points.push([lon, lat]);
       }
     }
-  });
-}
-
-// ---- Боты расширяют территорию через Convex Hull каждые 5 сек ----
-function botExpandCycle(){
-  bots.forEach((bot,idx)=>{
-    if(!bot.polygon) return;
-    if(bot.coins<50) return;
-    // берём текущие точки полигона
-    const latlngs = bot.polygon.getLatLngs()[0].map(p=>[p.lat,p.lng]);
-    const base = latlngs[Math.floor(Math.random()*latlngs.length)];
-    const dx = (Math.random()*150+50)*(Math.random()<0.5?-1:1);
-    const dy = (Math.random()*150+50)*(Math.random()<0.5?-1:1);
-    // приблизительная конвертация метров в градусы (не точная, но достаточная)
-    const newPoint = [base[0]+dy*0.00001, base[1]+dx*0.00001];
-    latlngs.push(newPoint);
-    const hull = convexHull(latlngs);
-    bot.polygon.setLatLngs(hull.map(p=>({lat:p[0],lng:p[1]})));
-    // перемещаем лейбл
-    if(bot.label){ bot.label.setLatLng(bot.polygon.getBounds().getCenter()); }
-    bot.coins -= 50;
-  });
-}
-
-// ---- Боты получают доход каждую секунду ----
-function botIncomeCycle(){
-  bots.forEach(bot=>{
-    if(!bot.polygon) return;
-    let income=0, availableWorkers=bot.population;
-    bot.shops.forEach(s=>{ if(availableWorkers>=s.workers){ income+=SHOP_INCOME; availableWorkers-=s.workers; } });
-    bot.factories.forEach(f=>{ if(availableWorkers>=f.workers){ income+=FACTORY_INCOME; availableWorkers-=f.workers; } });
-    bot.coins += income;
-  });
-}
-
-// ---- Сохранение/загрузка ботов: функции для восстановления маркеров ----
-function restoreBotFromData(bData, botObj){
-  botObj.coins = bData.coins ?? 5000;
-  botObj.population = bData.population ?? 50;
-  botObj.color = bData.color ?? botObj.color;
-
-  // remove existing markers/polygon if any
-  if(botObj.polygon){ map.removeLayer(botObj.polygon); botObj.polygon=null; }
-  botObj.markers.houses.forEach(m=>map.removeLayer(m)); botObj.markers.houses=[];
-  botObj.markers.shops.forEach(m=>map.removeLayer(m)); botObj.markers.shops=[];
-  botObj.markers.factories.forEach(m=>map.removeLayer(m)); botObj.markers.factories=[];
-
-  if(bData.polygon){
-    botObj.polygon = L.polygon(bData.polygon,{color:botObj.color, weight:2, opacity:0.9}).addTo(map);
-    botObj.label = L.marker(botObj.polygon.getBounds().getCenter(), { interactive:false, icon:L.divIcon({className:'botLabel', html:botObj.name, iconSize:[60,20]}) }).addTo(map);
-  } else {
-    // если нет полигона — создаём рандомно небольшой
-    initBotsRandomly();
+    return { points, attempts };
   }
-  // здания
-  botObj.houses = []; botObj.shops = []; botObj.factories = [];
-  (bData.houses||[]).forEach(h=>{
-    const m = L.marker(h,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map);
-    botObj.houses.push(m); botObj.markers.houses.push(m);
-  });
-  (bData.shops||[]).forEach(s=>{
-    const latlng = s.latlng || s;
-    const m = L.marker(latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map);
-    botObj.shops.push({marker:m, workers: s.workers ?? SHOP_WORKERS}); botObj.markers.shops.push(m);
-  });
-  (bData.factories||[]).forEach(f=>{
-    const latlng = f.latlng || f;
-    const m = L.marker(latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map);
-    botObj.factories.push({marker:m, workers: f.workers ?? FACTORY_WORKERS}); botObj.markers.factories.push(m);
-  });
-}
 
-// ---- Загрузка сохранения ----
-window.addEventListener('load',()=>{
-  const saved=localStorage.getItem('gameSave');
-  if(saved){
-    const data=JSON.parse(saved);
-    coins=data.coins ?? coins; population=data.population ?? population;
-    coinDisplay.textContent=coins; popDisplay.textContent=population;
+  // Отрисовка Voronoi на основе точек (точки задаются в lon/lat, проецируем в экранные xy)
+  function renderVoronoiFromGeoPoints(geoPoints) {
+    vorGroup.selectAll('*').remove();
+    const projected = geoPoints.map(p => projection(p)); // [[x,y],...]
 
-    if(data.polygon){ polygon=L.polygon(data.polygon,{color:'blue'}).addTo(map); initHandles(); }
-    data.houses?.forEach(h=>houses.push(L.marker(h,{icon:L.divIcon({className:'house',html:'🏠',iconSize:[24,24]})}).addTo(map)));
-    data.shops?.forEach(s=>shops.push({marker:L.marker(s.latlng,{icon:L.divIcon({className:'shop',html:'🏬',iconSize:[24,24]})}).addTo(map), workers:s.workers}));
-    data.factories?.forEach(f=>factories.push({marker:L.marker(f.latlng,{icon:L.divIcon({className:'factory',html:'🏭',iconSize:[24,24]})}).addTo(map), workers:f.workers}));
+    // если слишком мало точек — ничего не рисуем
+    if (projected.length === 0) return;
 
-    // restore bots if present
-    if(data.bots && Array.isArray(data.bots) && data.bots.length===bots.length){
-      data.bots.forEach((bData, i)=> restoreBotFromData(bData, bots[i]));
-    } else {
-      // иначе рандомная инициализация
-      initBotsRandomly();
+    // Создаём Delaunay / Voronoi в экранных координатах
+    const delaunay = d3.Delaunay.from(projected);
+    const vor = delaunay.voronoi([0, 0, width, height]);
+
+    // Рисуем все ячейки; если cellPolygon возвращает null — fallback вокруг точки
+    const colorScale = d3.scaleSequential(t => {
+      // простая вариативность: возвращаем HSL-ish зелёный
+      const tnum = 40 + Math.round(t * 80);
+      return `rgb(${20 + Math.round((1-t)*40)}, ${tnum}, ${20 + Math.round((1-t)*20)})`;
+    });
+
+    for (let i = 0; i < projected.length; i++) {
+      let cell = vor.cellPolygon(i); // массив [x,y] или null
+      let d;
+      if (cell && cell.length) {
+        d = 'M' + cell.map(p => p[0] + ',' + p[1]).join('L') + 'Z';
+      } else {
+        // резервный маленький прямоугольник вокруг точки чтобы не было дыр
+        const px = projected[i][0], py = projected[i][1], r = 6;
+        d = `M${px-r},${py-r}L${px+r},${py-r}L${px+r},${py+r}L${px-r},${py+r}Z`;
+      }
+
+      vorGroup.append('path')
+        .attr('d', d)
+        .attr('class', 'vor-cell')
+        .attr('fill', colorScale(Math.random()))
+        .attr('opacity', 0.98);
     }
-    updateStatus();
-  } else {
-    // если нет сохранения — инициализируем ботов рандомно
-    initBotsRandomly();
   }
-});
 
-// ---- Перезапуск циклов ботов ----
-setInterval(botBuildCycle, 2000);
-setInterval(botExpandCycle, 5000);
-setInterval(botIncomeCycle, 1000);
+  // Главная функция: генерировать точки внутри суши и отрисовать
+  async function generateAndRender(cellCount) {
+    infoEl.textContent = 'Генерация точек…';
+    // Сначала перерисовываем land clip (нужно до renderVoronoi, чтобы clipPath был готов)
+    renderLandShapes();
 
+    const { points, attempts } = generatePointsInsideLand(cellCount);
+    infoEl.textContent = `Сгенерировано ${points.length} точек (попыток ${attempts}).`;
+    // Проецируем и рендерим
+    renderVoronoiFromGeoPoints(points);
+  }
+
+  // Инициализация UI и поведения
+  renderLandShapes();
+  // initial render
+  await generateAndRender(+cellCountInput.value);
+
+  regenBtn.addEventListener('click', async () => {
+    const val = Math.max(100, Math.min(8000, +cellCountInput.value || 1500));
+    cellCountInput.value = val;
+    await generateAndRender(val);
+  });
+
+  // --- Пан/Зум (масштабирование относительно курсора и перетаскивание) ---
+  let scale = 1, originX = 0, originY = 0;
+  let isDragging = false, startX = 0, startY = 0;
+  const root = document.getElementById('svg');
+
+  // wheel zoom
+  root.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = root.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 0.88;
+    const prevScale = scale;
+    scale *= factor;
+
+    // корректируем origin так, чтобы зум был относительно курсора
+    originX = (originX - mx) * (scale / prevScale) + mx;
+    originY = (originY - my) * (scale / prevScale) + my;
+
+    // применяем transform к группам
+    d3.select('#voronoiGroup').attr('transform', `translate(${originX},${originY}) scale(${scale})`);
+    d3.select('#landOutlineGroup').attr('transform', `translate(${originX},${originY}) scale(${scale})`);
+  }, { passive: false });
+
+  // drag
+  root.addEventListener('mousedown', e => {
+    isDragging = true;
+    startX = e.clientX - originX;
+    startY = e.clientY - originY;
+  });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    originX = e.clientX - startX;
+    originY = e.clientY - startY;
+    d3.select('#voronoiGroup').attr('transform', `translate(${originX},${originY}) scale(${scale})`);
+    d3.select('#landOutlineGroup').attr('transform', `translate(${originX},${originY}) scale(${scale})`);
+  });
+
+})();
 </script>
 </body>
 </html>
